@@ -1,0 +1,23 @@
+{
+  "name": "hub-jesusuzcategui",
+  "version": "1.0.0",
+  "description": "Hub Backend — Hexagonal Architecture base (Fastify + TypeScript)",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "podman:run": "podman-compose -f docker-compose.local.yml up --build",
+    "podman:down": "podman-compose -f docker-compose.local.yml down"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.8.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.5"
+  }
+}

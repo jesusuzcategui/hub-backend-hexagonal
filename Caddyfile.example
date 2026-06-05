@@ -1,0 +1,5 @@
+hubjesusuzcategui.localhost {
+  tls /etc/caddy/certs/hubjesusuzcategui.localhost.pem /etc/caddy/certs/hubjesusuzcategui.localhost-key.pem
+
+  reverse_proxy hub:3000
+}

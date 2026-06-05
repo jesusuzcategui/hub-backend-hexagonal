@@ -1,0 +1,10 @@
+services:
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: 3000
+      STATE_SECRET: '${STATE_SECRET}'
+      ALLOWED_REDIRECT_HOSTS: '${ALLOWED_REDIRECT_HOSTS}'
+    restart: unless-stopped

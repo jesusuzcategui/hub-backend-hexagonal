@@ -1,0 +1,33 @@
+services:
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    env_file:
+      - .env
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    volumes:
+      - ./src:/app/src:z
+    restart: unless-stopped
+    networks:
+      - hub-local
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:z
+      - ./certs:/etc/caddy/certs:z
+    depends_on:
+      - hub
+    restart: unless-stopped
+    networks:
+      - hub-local
+
+networks:
+  hub-local:
+    driver: bridge
