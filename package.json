@@ -9,6 +9,8 @@
     "start": "node dist/server.js",
     "podman:run": "podman-compose -f docker-compose.local.yml up --build",
     "podman:down": "podman-compose -f docker-compose.local.yml down",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
