@@ -1,38 +1,78 @@
 import "dotenv/config";
+import { z } from "zod";
 
-const requiredEnvVars = [
-  "STATE_SECRET",
-  "PORT",
-  "DATABASE_URL",
-  "REDIS_URL",
-] as const;
+const envSchema = z.object({
+  PORT: z.coerce.number().int().positive(),
+  STATE_SECRET: z.string().min(32),
+  ALLOWED_REDIRECT_HOSTS: z.string().default(""),
 
-type EnvVar = (typeof requiredEnvVars)[number];
+  DATABASE_URL: z.string().url(),
+  REDIS_URL: z.string().url(),
 
-const validateEnv = (): void => {
-  const missing = requiredEnvVars.filter((key) => !process.env[key]);
-  if (missing.length > 0) {
-    throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
-  }
-};
+  JWT_ACCESS_SECRET: z.string().min(32),
+  JWT_ACCESS_EXPIRY_SECONDS: z.coerce.number().int().positive().default(900),
+  JWT_REFRESH_EXPIRY_SECONDS: z.coerce.number().int().positive().default(2592000),
 
-validateEnv();
+  COOKIE_SECURE: z
+    .string()
+    .default("true")
+    .transform((v) => v === "true"),
+  COOKIE_DOMAIN: z.string().optional(),
 
-const allowedHosts = (process.env.ALLOWED_REDIRECT_HOSTS ?? "")
-  .split(",")
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_CALLBACK_URL: z.string().url().optional(),
+
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITHUB_CLIENT_SECRET: z.string().optional(),
+  GITHUB_CALLBACK_URL: z.string().url().optional(),
+});
+
+const parsed = envSchema.safeParse(process.env);
+
+if (!parsed.success) {
+  console.error("Invalid environment variables:");
+  console.error(parsed.error.flatten().fieldErrors);
+  process.exit(1);
+}
+
+const _env = parsed.data;
+
+const allowedHosts = _env.ALLOWED_REDIRECT_HOSTS.split(",")
   .map((h) => h.trim().toLowerCase())
   .filter(Boolean);
 
 export const env = {
   server: {
-    port: parseInt(process.env.PORT as string, 10),
-    stateSecret: process.env.STATE_SECRET as string,
+    port: _env.PORT,
+    stateSecret: _env.STATE_SECRET,
     allowedRedirectHosts: new Set(allowedHosts),
   },
   database: {
-    url: process.env.DATABASE_URL as string,
+    url: _env.DATABASE_URL,
   },
   cache: {
-    url: process.env.REDIS_URL as string,
+    url: _env.REDIS_URL,
+  },
+  jwt: {
+    accessSecret: _env.JWT_ACCESS_SECRET,
+    accessExpirySeconds: _env.JWT_ACCESS_EXPIRY_SECONDS,
+    refreshExpirySeconds: _env.JWT_REFRESH_EXPIRY_SECONDS,
+  },
+  cookie: {
+    secure: _env.COOKIE_SECURE,
+    domain: _env.COOKIE_DOMAIN,
+  },
+  oauth: {
+    google: {
+      clientId: _env.GOOGLE_CLIENT_ID,
+      clientSecret: _env.GOOGLE_CLIENT_SECRET,
+      callbackUrl: _env.GOOGLE_CALLBACK_URL,
+    },
+    github: {
+      clientId: _env.GITHUB_CLIENT_ID,
+      clientSecret: _env.GITHUB_CLIENT_SECRET,
+      callbackUrl: _env.GITHUB_CALLBACK_URL,
+    },
   },
 } as const;
