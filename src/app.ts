@@ -4,6 +4,7 @@ import postgresPlugin from "./plugins/postgres";
 import redisPlugin from "./plugins/redis";
 import jwtPlugin from "./plugins/jwt";
 import { authRoutes } from "./modules/auth/auth.routes";
+import { usersRoutes } from "./modules/users/users.routes";
 import { AppError } from "./lib/errors";
 import { env } from "./config/env";
 
@@ -16,6 +17,7 @@ export const buildApp = (): FastifyInstance => {
   app.register(jwtPlugin);
 
   app.register(authRoutes);
+  app.register(usersRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 
