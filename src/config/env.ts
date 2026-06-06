@@ -3,6 +3,8 @@ import "dotenv/config";
 const requiredEnvVars = [
   "STATE_SECRET",
   "PORT",
+  "DATABASE_URL",
+  "REDIS_URL",
 ] as const;
 
 type EnvVar = (typeof requiredEnvVars)[number];
@@ -26,5 +28,11 @@ export const env = {
     port: parseInt(process.env.PORT as string, 10),
     stateSecret: process.env.STATE_SECRET as string,
     allowedRedirectHosts: new Set(allowedHosts),
+  },
+  database: {
+    url: process.env.DATABASE_URL as string,
+  },
+  cache: {
+    url: process.env.REDIS_URL as string,
   },
 } as const;

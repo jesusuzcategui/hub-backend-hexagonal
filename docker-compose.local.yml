@@ -5,11 +5,48 @@ services:
       dockerfile: Dockerfile.dev
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql://hubuser:hubpass@postgres:5432/hubdb
+      REDIS_URL: redis://redis:6379
     dns:
       - 8.8.8.8
       - 1.1.1.1
     volumes:
       - ./src:/app/src:z
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - hub-local
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hubdb
+      POSTGRES_USER: hubuser
+      POSTGRES_PASSWORD: hubpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hubuser -d hubdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - hub-local
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
     restart: unless-stopped
     networks:
       - hub-local
@@ -27,6 +64,10 @@ services:
     restart: unless-stopped
     networks:
       - hub-local
+
+volumes:
+  postgres_data:
+  redis_data:
 
 networks:
   hub-local:
