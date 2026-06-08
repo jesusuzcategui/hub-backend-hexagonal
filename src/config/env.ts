@@ -19,6 +19,9 @@ const envSchema = z.object({
     .transform((v) => v === "true"),
   COOKIE_DOMAIN: z.string().optional(),
 
+  STRAPI_URL: z.string().url(),
+  STRAPI_TOKEN: z.string().min(1),
+
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CALLBACK_URL: z.string().url().optional(),
@@ -62,6 +65,10 @@ export const env = {
   cookie: {
     secure: _env.COOKIE_SECURE,
     domain: _env.COOKIE_DOMAIN,
+  },
+  strapi: {
+    url: _env.STRAPI_URL,
+    token: _env.STRAPI_TOKEN,
   },
   oauth: {
     google: {

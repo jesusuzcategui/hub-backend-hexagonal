@@ -5,6 +5,7 @@ import redisPlugin from "./plugins/redis";
 import jwtPlugin from "./plugins/jwt";
 import { authRoutes } from "./modules/auth/auth.routes";
 import { usersRoutes } from "./modules/users/users.routes";
+import { productsRoutes } from "./modules/products/products.routes";
 import { AppError } from "./lib/errors";
 import { env } from "./config/env";
 
@@ -18,6 +19,7 @@ export const buildApp = (): FastifyInstance => {
 
   app.register(authRoutes);
   app.register(usersRoutes);
+  app.register(productsRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 
