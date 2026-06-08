@@ -21,6 +21,7 @@ const envSchema = z.object({
 
   STRAPI_URL: z.string().url(),
   STRAPI_TOKEN: z.string().min(1),
+  STRAPI_WEBHOOK_SECRET: z.string().min(32),
 
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
@@ -69,6 +70,7 @@ export const env = {
   strapi: {
     url: _env.STRAPI_URL,
     token: _env.STRAPI_TOKEN,
+    webhookSecret: _env.STRAPI_WEBHOOK_SECRET,
   },
   oauth: {
     google: {

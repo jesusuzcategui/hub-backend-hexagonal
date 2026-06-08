@@ -93,11 +93,33 @@ describe("GET /products/:slug", () => {
   });
 });
 
+const WEBHOOK_SECRET = process.env.STRAPI_WEBHOOK_SECRET!;
+
 describe("POST /webhooks/strapi", () => {
+  it("returns 401 without signature header", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/webhooks/strapi",
+      body: { event: "entry.create", uid: "api::product.product", entry: {} },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("returns 401 with wrong signature", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/webhooks/strapi",
+      headers: { "x-strapi-signature": "wrongsecret" },
+      body: { event: "entry.create", uid: "api::product.product", entry: {} },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
   it("upserts product on entry.update event", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/webhooks/strapi",
+      headers: { "x-strapi-signature": WEBHOOK_SECRET },
       body: {
         event: "entry.update",
         uid: "api::product.product",
@@ -119,7 +141,7 @@ describe("POST /webhooks/strapi", () => {
 
     const product = await app.drizzle.query.products.findFirst({
       where: eq(products.slug, "plan-1-clase"),
-      columns: { priceCop: true, name: true },
+      columns: { priceCop: true },
     });
     expect(product?.priceCop).toBe(55000);
 
@@ -127,6 +149,7 @@ describe("POST /webhooks/strapi", () => {
     await app.inject({
       method: "POST",
       url: "/webhooks/strapi",
+      headers: { "x-strapi-signature": WEBHOOK_SECRET },
       body: {
         event: "entry.update",
         uid: "api::product.product",
@@ -149,6 +172,7 @@ describe("POST /webhooks/strapi", () => {
     const res = await app.inject({
       method: "POST",
       url: "/webhooks/strapi",
+      headers: { "x-strapi-signature": WEBHOOK_SECRET },
       body: { event: "entry.create", uid: "api::other.other", entry: {} },
     });
     expect(res.statusCode).toBe(200);
