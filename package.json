@@ -5,6 +5,8 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:once": "tsx src/server.ts",
+    "dev:kill": "fuser -k 3002/tcp || true",
     "build": "tsc",
     "start": "node dist/server.js",
     "podman:run": "podman-compose -f docker-compose.local.yml up --build",
@@ -13,7 +15,8 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "dev:tunnel": "ngrok http --url=trichotomous-chrystal-dilly.ngrok-free.dev 3002"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

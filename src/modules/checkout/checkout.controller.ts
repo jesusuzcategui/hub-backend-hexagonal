@@ -1,12 +1,12 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { FastifyRequest, FastifyReply } from "fastify";
 import { createCheckoutSchema } from "./checkout.schemas";
-import { createCheckout, listUserOrders, grantClassCredits, logPayment } from "./checkout.service";
-import { verifyPaypalWebhookSignature } from "./providers/paypal";
+import { createCheckout, listUserOrders, grantClassCredits, failOrder, logPayment } from "./checkout.service";
+import { capturePaypalOrder, verifyPaypalWebhookSignature } from "./providers/paypal";
 import { AppError } from "../../lib/errors";
 import { env } from "../../config/env";
 import { orders } from "../../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 export async function createCheckoutController(
   request: FastifyRequest,
@@ -20,6 +20,53 @@ export async function createCheckoutController(
 
   const result = await createCheckout(request.server, request.user.sub, parsed.data);
   reply.status(201).send({ data: result });
+}
+
+export async function checkoutSuccessController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const query = request.query as { token?: string };
+
+  if (!query.token) {
+    reply.status(200).send({ ok: true });
+    return;
+  }
+
+  const ppOrderId = query.token;
+
+  const order = await request.server.drizzle.query.orders.findFirst({
+    where: sql`${orders.metadata}->>'ppOrderId' = ${ppOrderId}`,
+    columns: { id: true, userId: true, totalCents: true, currency: true },
+  });
+
+  if (!order) {
+    reply.status(200).send({ ok: true });
+    return;
+  }
+
+  try {
+    const status = await capturePaypalOrder(ppOrderId);
+
+    await logPayment(request.server, {
+      userId: order.userId,
+      orderId: order.id,
+      gateway: "paypal",
+      externalId: ppOrderId,
+      status: status === "COMPLETED" ? "approved" : "pending",
+      amountCents: order.totalCents,
+      currency: order.currency,
+      rawWebhook: { ppOrderId, captureStatus: status },
+    });
+
+    if (status === "COMPLETED") {
+      await grantClassCredits(request.server, order.id);
+    }
+  } catch (err) {
+    request.server.log.error(err, "PayPal capture error");
+  }
+
+  reply.status(200).send({ ok: true });
 }
 
 export async function listOrdersController(
@@ -41,7 +88,12 @@ export async function mpWebhookController(
   const body = request.body as { action?: string; data?: { id?: string } };
   const dataId = body?.data?.id;
 
-  if (!xSignature || !dataId) {
+  if (!dataId) {
+    reply.status(401).send({ error: { code: "MISSING_SIGNATURE", message: "Missing signature" } });
+    return;
+  }
+
+  if (!xSignature) {
     reply.status(401).send({ error: { code: "MISSING_SIGNATURE", message: "Missing signature" } });
     return;
   }
@@ -52,7 +104,7 @@ export async function mpWebhookController(
   const v1 = v1Match?.[1];
 
   if (!ts || !v1) {
-    reply.status(401).send({ error: { code: "INVALID_SIGNATURE", message: "Invalid signature format" } });
+    reply.status(401).send({ error: { code: "INVALID_SIGNATURE", message: "Malformed x-signature header" } });
     return;
   }
 
@@ -61,7 +113,7 @@ export async function mpWebhookController(
   const vBuf = Buffer.from(v1, "hex");
   const eBuf = Buffer.from(expected, "hex");
   if (vBuf.length !== eBuf.length || !timingSafeEqual(vBuf, eBuf)) {
-    reply.status(401).send({ error: { code: "INVALID_SIGNATURE", message: "Invalid signature" } });
+    reply.status(401).send({ error: { code: "INVALID_SIGNATURE", message: "Signature mismatch" } });
     return;
   }
 
@@ -117,6 +169,8 @@ export async function mpWebhookController(
 
     if (payment.status === "approved") {
       await grantClassCredits(request.server, order.id);
+    } else if (payment.status === "rejected" || payment.status === "cancelled") {
+      await failOrder(request.server, order.id);
     }
   } catch (err) {
     request.server.log.error(err, "MP webhook processing error");
@@ -166,10 +220,19 @@ export async function paypalWebhookController(
     return;
   }
 
-  if (body?.event_type !== "PAYMENT.CAPTURE.COMPLETED") {
+  const PAYPAL_HANDLED = new Set([
+    "PAYMENT.CAPTURE.COMPLETED",
+    "PAYMENT.CAPTURE.DENIED",
+    "PAYMENT.CAPTURE.DECLINED",
+    "CHECKOUT.ORDER.DECLINED",
+  ]);
+
+  if (!PAYPAL_HANDLED.has(body?.event_type ?? "")) {
     reply.status(200).send({ ok: true });
     return;
   }
+
+  const isFailed = body?.event_type !== "PAYMENT.CAPTURE.COMPLETED";
 
   const ppOrderId = body.resource?.id;
   const referenceId = body.resource?.purchase_units?.[0]?.reference_id;
@@ -197,13 +260,17 @@ export async function paypalWebhookController(
       orderId: order.id,
       gateway: "paypal",
       externalId: ppOrderId ?? referenceId,
-      status: "approved",
+      status: isFailed ? "rejected" : "approved",
       amountCents: Math.round(parseFloat(amountValue ?? "0") * 100),
       currency,
       rawWebhook: body,
     });
 
-    await grantClassCredits(request.server, order.id);
+    if (isFailed) {
+      await failOrder(request.server, order.id);
+    } else {
+      await grantClassCredits(request.server, order.id);
+    }
   } catch (err) {
     request.server.log.error(err, "PayPal webhook processing error");
   }

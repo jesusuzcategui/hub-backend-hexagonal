@@ -50,7 +50,11 @@ export async function createCheckout(
       priceCop: product.priceCop,
     });
 
-    await db.update(orders).set({ mpPreferenceId: preferenceId, mpExternalRef: order.id }).where(eq(orders.id, order.id));
+    await db.update(orders).set({
+      gateway: "mercadopago",
+      mpPreferenceId: preferenceId,
+      mpExternalRef: order.id,
+    }).where(eq(orders.id, order.id));
 
     return { orderId: order.id, paymentUrl: initPoint, gateway: "mercadopago" };
   } else {
@@ -61,8 +65,9 @@ export async function createCheckout(
     });
 
     await db.update(orders).set({
+      gateway: "paypal",
       mpExternalRef: order.id,
-      metadata: { gateway: "paypal", ppOrderId },
+      metadata: { ppOrderId },
     }).where(eq(orders.id, order.id));
 
     return { orderId: order.id, paymentUrl: approvalUrl, gateway: "paypal" };
@@ -72,9 +77,16 @@ export async function createCheckout(
 export async function listUserOrders(fastify: FastifyInstance, userId: string) {
   return fastify.drizzle.query.orders.findMany({
     where: eq(orders.userId, userId),
-    columns: { id: true, status: true, totalCents: true, currency: true, paidAt: true, createdAt: true },
+    columns: { id: true, status: true, gateway: true, totalCents: true, currency: true, paidAt: true, createdAt: true },
     orderBy: (o, { desc }) => [desc(o.createdAt)],
   });
+}
+
+export async function failOrder(fastify: FastifyInstance, orderId: string): Promise<void> {
+  await fastify.drizzle
+    .update(orders)
+    .set({ status: "failed", updatedAt: new Date() })
+    .where(and(eq(orders.id, orderId), eq(orders.status, "pending")));
 }
 
 export async function grantClassCredits(
