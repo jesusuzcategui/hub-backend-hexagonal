@@ -61,3 +61,53 @@ export async function capturePaypalOrder(ppOrderId: string): Promise<string> {
   });
   return result.result.status ?? "UNKNOWN";
 }
+
+export interface PaypalWebhookHeaders {
+  transmissionId: string;
+  transmissionTime: string;
+  transmissionSig: string;
+  certUrl: string;
+  authAlgo: string;
+}
+
+export async function verifyPaypalWebhookSignature(
+  headers: PaypalWebhookHeaders,
+  body: unknown,
+): Promise<boolean> {
+  if (!env.paypal.webhookId) {
+    throw new Error("PAYPAL_WEBHOOK_ID is not configured — register a webhook in PayPal developer portal");
+  }
+
+  const apiBase =
+    env.paypal.mode === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
+
+  const tokenRes = await fetch(`${apiBase}/v1/oauth2/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${Buffer.from(`${env.paypal.clientId}:${env.paypal.clientSecret}`).toString("base64")}`,
+    },
+    body: "grant_type=client_credentials",
+  });
+  const { access_token } = (await tokenRes.json()) as { access_token: string };
+
+  const verifyRes = await fetch(`${apiBase}/v1/notifications/verify-webhook-signature`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${access_token}`,
+    },
+    body: JSON.stringify({
+      auth_algo: headers.authAlgo,
+      cert_url: headers.certUrl,
+      transmission_id: headers.transmissionId,
+      transmission_sig: headers.transmissionSig,
+      transmission_time: headers.transmissionTime,
+      webhook_id: env.paypal.webhookId,
+      webhook_event: body,
+    }),
+  });
+
+  const result = (await verifyRes.json()) as { verification_status?: string };
+  return result.verification_status === "SUCCESS";
+}

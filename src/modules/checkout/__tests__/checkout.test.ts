@@ -1,8 +1,20 @@
+import { createHmac } from "crypto";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { FastifyInstance } from "fastify";
 import { getApp, closeApp, deleteTestUser } from "../../../test/helpers";
+import { env } from "../../../config/env";
 import { eq } from "drizzle-orm";
 import { orders, accounts, classCredits, orderItems, payments } from "../../../db/schema";
+
+function mpSignatureHeaders(dataId: string, xRequestId: string = ""): Record<string, string> {
+  const ts = "1000000000";
+  const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
+  const sig = createHmac("sha256", env.mercadopago.webhookSecret).update(manifest).digest("hex");
+  return {
+    "x-signature": `ts=${ts},v1=${sig}`,
+    "x-request-id": xRequestId,
+  };
+}
 
 // Mock payment providers — avoid real API calls in tests
 vi.mock("../providers/mercadopago", () => ({
@@ -18,6 +30,7 @@ vi.mock("../providers/paypal", () => ({
     approvalUrl: "https://www.sandbox.paypal.com/checkoutnow?token=PP_ORDER_TEST_456",
   }),
   capturePaypalOrder: vi.fn().mockResolvedValue("COMPLETED"),
+  verifyPaypalWebhookSignature: vi.fn().mockResolvedValue(true),
 }));
 
 const TEST_USER = { email: "checkout-user@hub.test", password: "Password123!", displayName: "Checkout User" };
@@ -146,10 +159,20 @@ describe("GET /checkout/orders", () => {
 });
 
 describe("POST /webhooks/mercadopago", () => {
-  it("ignores non-payment events", async () => {
+  it("returns 401 without signature headers", async () => {
     const res = await app.inject({
       method: "POST",
       url: "/webhooks/mercadopago",
+      body: { action: "subscription.preapproval", data: { id: "123" } },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("ignores non-payment events with valid signature", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/webhooks/mercadopago",
+      headers: mpSignatureHeaders("123", "req-001"),
       body: { action: "subscription.preapproval", data: { id: "123" } },
     });
     expect(res.statusCode).toBe(200);
@@ -167,10 +190,17 @@ describe("POST /webhooks/paypal — grant credits on PAYMENT.CAPTURE.COMPLETED",
     });
     const orderId = checkoutRes.json().data.orderId;
 
-    // Simulate PayPal webhook
+    // Simulate PayPal webhook (verifyPaypalWebhookSignature is mocked to return true)
     const webhookRes = await app.inject({
       method: "POST",
       url: "/webhooks/paypal",
+      headers: {
+        "paypal-transmission-id": "test-trans-id",
+        "paypal-transmission-time": "2024-01-01T00:00:00Z",
+        "paypal-transmission-sig": "test-sig",
+        "paypal-cert-url": "https://api.sandbox.paypal.com/v1/notifications/certs/test",
+        "paypal-auth-algo": "SHA256withRSA",
+      },
       body: {
         event_type: "PAYMENT.CAPTURE.COMPLETED",
         resource: {
