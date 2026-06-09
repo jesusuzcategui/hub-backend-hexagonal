@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, RouteHandlerMethod } from "fastify";
 import { AppError } from "../../lib/errors";
 import {
   getMeController,
@@ -26,11 +26,11 @@ export async function usersRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.patch(
     "/users/:id/role",
     { preHandler: [fastify.authenticate, requireAdmin] },
-    changeRoleController,
+    changeRoleController as RouteHandlerMethod,
   );
   fastify.delete(
     "/users/:id",
     { preHandler: [fastify.authenticate, requireAdmin] },
-    deactivateUserController,
+    deactivateUserController as RouteHandlerMethod,
   );
 }

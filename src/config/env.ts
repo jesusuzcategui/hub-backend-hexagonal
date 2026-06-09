@@ -19,6 +19,20 @@ const envSchema = z.object({
     .transform((v) => v === "true"),
   COOKIE_DOMAIN: z.string().optional(),
 
+  APP_PUBLIC_URL: z.string().url().optional(),
+  MP_ACCESS_TOKEN: z.string().min(1),
+  MP_WEBHOOK_SECRET: z.string().min(32),
+  MP_SUCCESS_URL: z.string().url(),
+  MP_FAILURE_URL: z.string().url(),
+  MP_PENDING_URL: z.string().url(),
+
+  PAYPAL_CLIENT_ID: z.string().min(1),
+  PAYPAL_CLIENT_SECRET: z.string().min(1),
+  PAYPAL_MODE: z.enum(["sandbox", "live"]).default("sandbox"),
+  PAYPAL_WEBHOOK_ID: z.string().optional(),
+  PAYPAL_SUCCESS_URL: z.string().url(),
+  PAYPAL_CANCEL_URL: z.string().url(),
+
   STRAPI_URL: z.string().url(),
   STRAPI_TOKEN: z.string().min(1),
   STRAPI_WEBHOOK_SECRET: z.string().min(32),
@@ -66,6 +80,24 @@ export const env = {
   cookie: {
     secure: _env.COOKIE_SECURE,
     domain: _env.COOKIE_DOMAIN,
+  },
+  app: {
+    publicUrl: _env.APP_PUBLIC_URL,
+  },
+  mercadopago: {
+    accessToken: _env.MP_ACCESS_TOKEN,
+    webhookSecret: _env.MP_WEBHOOK_SECRET,
+    successUrl: _env.MP_SUCCESS_URL,
+    failureUrl: _env.MP_FAILURE_URL,
+    pendingUrl: _env.MP_PENDING_URL,
+  },
+  paypal: {
+    clientId: _env.PAYPAL_CLIENT_ID,
+    clientSecret: _env.PAYPAL_CLIENT_SECRET,
+    mode: _env.PAYPAL_MODE,
+    webhookId: _env.PAYPAL_WEBHOOK_ID,
+    successUrl: _env.PAYPAL_SUCCESS_URL,
+    cancelUrl: _env.PAYPAL_CANCEL_URL,
   },
   strapi: {
     url: _env.STRAPI_URL,
