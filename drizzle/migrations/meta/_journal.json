@@ -16,5 +16,12 @@
       "tag": "0001_products_dual_currency",
       "breakpoints": true
     }
+    ,{
+      "idx": 2,
+      "version": "7",
+      "when": 1781033500000,
+      "tag": "0002_orders_gateway",
+      "breakpoints": true
+    }
   ]
 }

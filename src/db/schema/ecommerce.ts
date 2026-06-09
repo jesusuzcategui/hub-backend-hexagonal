@@ -109,6 +109,7 @@ export const orders = ecommerceSchema.table(
     subtotalCents: integer("subtotal_cents").notNull(),
     totalCents: integer("total_cents").notNull(),
     currency: char("currency", { length: 3 }).notNull().default("ARS"),
+    gateway: text("gateway"),
     mpPreferenceId: text("mp_preference_id"),
     mpExternalRef: text("mp_external_ref").unique(),
     metadata: jsonb("metadata").notNull().default({}),

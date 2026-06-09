@@ -5,6 +5,8 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:once": "tsx src/server.ts",
+    "dev:kill": "fuser -k 3002/tcp || true",
     "build": "tsc",
     "start": "node dist/server.js",
     "podman:run": "podman-compose -f docker-compose.local.yml up --build",
@@ -13,10 +15,12 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "dev:tunnel": "ngrok http --url=trichotomous-chrystal-dilly.ngrok-free.dev 3002"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
+    "@paypal/paypal-server-sdk": "^2.4.0",
     "argon2": "^0.44.0",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.45.2",
@@ -24,6 +28,7 @@
     "fastify-plugin": "^5.0.0",
     "ioredis": "^5.4.2",
     "jose": "^6.2.3",
+    "mercadopago": "^3.1.0",
     "pg": "^8.13.3",
     "zod": "^4.4.3"
   },
