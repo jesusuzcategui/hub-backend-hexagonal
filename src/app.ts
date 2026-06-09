@@ -3,10 +3,14 @@ import Fastify, { FastifyInstance, FastifyError } from "fastify";
 import postgresPlugin from "./plugins/postgres";
 import redisPlugin from "./plugins/redis";
 import jwtPlugin from "./plugins/jwt";
+import requestLoggerHook from "./hooks/requestLogger";
 import { authRoutes } from "./modules/auth/auth.routes";
 import { usersRoutes } from "./modules/users/users.routes";
 import { productsRoutes } from "./modules/products/products.routes";
 import { checkoutRoutes } from "./modules/checkout/checkout.routes";
+import { cartRoutes } from "./modules/cart/cart.routes";
+import { paymentsRoutes } from "./modules/payments/payments.routes";
+import { contentAccessRoutes } from "./modules/content-access/content-access.routes";
 import { AppError } from "./lib/errors";
 import { env } from "./config/env";
 
@@ -17,11 +21,15 @@ export const buildApp = (): FastifyInstance => {
   app.register(postgresPlugin);
   app.register(redisPlugin);
   app.register(jwtPlugin);
+  app.register(requestLoggerHook);
 
   app.register(authRoutes);
   app.register(usersRoutes);
   app.register(productsRoutes);
   app.register(checkoutRoutes);
+  app.register(cartRoutes);
+  app.register(paymentsRoutes);
+  app.register(contentAccessRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 

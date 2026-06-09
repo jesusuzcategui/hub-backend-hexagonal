@@ -5,6 +5,7 @@ import { classCredits } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { createMpPreference } from "./providers/mercadopago";
 import { createPaypalOrder } from "./providers/paypal";
+import { grantContentAccess } from "../content-access/content-access.service";
 import type { CreateCheckoutInput } from "./checkout.schemas";
 
 export async function createCheckout(
@@ -127,6 +128,12 @@ export async function grantClassCredits(
       productId: item.productId,
       totalCredits: credits,
     });
+  });
+
+  await grantContentAccess(fastify, {
+    userId: order.userId,
+    orderId: order.id,
+    productId: item.productId,
   });
 }
 
