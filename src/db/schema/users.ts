@@ -2,8 +2,9 @@ import { boolean, index, pgSchema, text, timestamp, uniqueIndex, uuid } from "dr
 
 export const usersSchema = pgSchema("users");
 
-export const userRoleEnum = usersSchema.enum("user_role", ["user", "admin"]);
+export const userRoleEnum = usersSchema.enum("user_role", ["user", "admin", "teacher"]);
 export const providerTypeEnum = usersSchema.enum("provider_type", ["google", "github"]);
+export const accountStatusEnum = usersSchema.enum("account_status", ["active", "suspended", "blocked", "deleted"]);
 
 export const accounts = usersSchema.table(
   "accounts",
@@ -16,10 +17,16 @@ export const accounts = usersSchema.table(
     role: userRoleEnum("role").notNull().default("user"),
     emailVerified: boolean("email_verified").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
+    status: accountStatusEnum("status").notNull().default("active"),
+    suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("idx_accounts_email").on(table.email)],
+  (table) => [
+    index("idx_accounts_email").on(table.email),
+    index("idx_accounts_status").on(table.status),
+  ],
 );
 
 export const providers = usersSchema.table(

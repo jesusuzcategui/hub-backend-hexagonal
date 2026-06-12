@@ -6,6 +6,7 @@ import {
   listUsersController,
   changeRoleController,
   deactivateUserController,
+  suspendAccountController,
 } from "./users.controller";
 
 async function requireAdmin(request: Parameters<typeof getMeController>[0], reply: Parameters<typeof getMeController>[1]) {
@@ -17,6 +18,7 @@ async function requireAdmin(request: Parameters<typeof getMeController>[0], repl
 export async function usersRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get("/users/me", { preHandler: fastify.authenticate }, getMeController);
   fastify.patch("/users/me", { preHandler: fastify.authenticate }, updateMeController);
+  fastify.patch("/account/suspend", { preHandler: fastify.authenticate }, suspendAccountController as RouteHandlerMethod);
 
   fastify.get(
     "/users",

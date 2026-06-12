@@ -13,6 +13,25 @@ export const bookingStatusEnum = schedulingSchema.enum("booking_status", [
   "no_show",
 ]);
 
+export const weeklySlots = schedulingSchema.table(
+  "weekly_slots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    teacherId: uuid("teacher_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    dayOfWeek: smallint("day_of_week").notNull(),
+    startTime: text("start_time").notNull(),
+    endTime: text("end_time").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_weekly_slots_teacher_id").on(table.teacherId),
+    index("idx_weekly_slots_day_of_week").on(table.dayOfWeek),
+  ],
+);
+
 export const availabilities = schedulingSchema.table(
   "availabilities",
   {
@@ -40,11 +59,14 @@ export const classCredits = schedulingSchema.table(
       .notNull()
       .references(() => accounts.id, { onDelete: "restrict" }),
     orderId: uuid("order_id")
-      .notNull()
       .references(() => orders.id, { onDelete: "restrict" }),
     productId: uuid("product_id")
       .notNull()
       .references(() => products.id, { onDelete: "restrict" }),
+    grantedBy: uuid("granted_by")
+      .references(() => accounts.id, { onDelete: "set null" }),
+    paymentMethod: text("payment_method"),
+    grantNotes: text("grant_notes"),
     totalCredits: smallint("total_credits").notNull(),
     usedCredits: smallint("used_credits").notNull().default(0),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
@@ -64,8 +86,9 @@ export const bookings = schedulingSchema.table(
       .notNull()
       .references(() => classCredits.id, { onDelete: "restrict" }),
     availabilityId: uuid("availability_id")
-      .notNull()
       .references(() => availabilities.id, { onDelete: "restrict" }),
+    weeklySlotId: uuid("weekly_slot_id")
+      .references(() => weeklySlots.id, { onDelete: "restrict" }),
     productId: uuid("product_id")
       .notNull()
       .references(() => products.id, { onDelete: "restrict" }),
@@ -83,6 +106,7 @@ export const bookings = schedulingSchema.table(
   },
   (table) => [
     index("idx_bookings_student_id").on(table.studentId),
+    index("idx_bookings_weekly_slot_id").on(table.weeklySlotId),
     index("idx_bookings_starts_at").on(table.startsAt),
     index("idx_bookings_status").on(table.status),
   ],

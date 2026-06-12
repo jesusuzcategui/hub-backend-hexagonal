@@ -6,6 +6,7 @@ import {
   listUsers,
   changeUserRole,
   deactivateUser,
+  suspendAccount,
 } from "./users.service";
 
 export async function getMeController(
@@ -67,4 +68,12 @@ export async function deactivateUserController(
 ): Promise<void> {
   await deactivateUser(request.server, request.params.id, request.user.sub);
   reply.status(204).send();
+}
+
+export async function suspendAccountController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  await suspendAccount(request.server, request.user.sub);
+  reply.status(200).send({ data: { suspended: true } });
 }

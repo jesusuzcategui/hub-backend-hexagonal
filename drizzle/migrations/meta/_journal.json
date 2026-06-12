@@ -23,5 +23,19 @@
       "tag": "0002_orders_gateway",
       "breakpoints": true
     }
+    ,{
+      "idx": 3,
+      "version": "7",
+      "when": 1749513600000,
+      "tag": "0003_manual_credit_grants",
+      "breakpoints": true
+    }
+    ,{
+      "idx": 4,
+      "version": "7",
+      "when": 1749600000000,
+      "tag": "0004_weekly_slots",
+      "breakpoints": true
+    }
   ]
 }

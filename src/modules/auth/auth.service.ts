@@ -137,7 +137,7 @@ export async function logoutUser(
 async function issueTokens(
   fastify: FastifyInstance,
   userId: string,
-  role: "user" | "admin",
+  role: "user" | "admin" | "teacher",
   meta: { userAgent?: string; ipAddress?: string } = {},
   existingFamilyId?: string,
 ): Promise<{ accessToken: string; refreshToken: string }> {

@@ -1,6 +1,6 @@
 import { eq, asc } from "drizzle-orm";
 import { FastifyInstance } from "fastify";
-import { accounts } from "../../db/schema";
+import { accounts, refreshTokens } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import type { UpdateProfileInput, ChangeRoleInput } from "./users.schemas";
 
@@ -126,4 +126,28 @@ export async function deactivateUser(
   if (!updated) {
     throw new AppError(404, "USER_NOT_FOUND", "User not found");
   }
+}
+
+export async function suspendAccount(fastify: FastifyInstance, userId: string) {
+  const db = fastify.drizzle;
+
+  const account = await db.query.accounts.findFirst({
+    where: eq(accounts.id, userId),
+    columns: { id: true, status: true },
+  });
+
+  if (!account) throw new AppError(404, "USER_NOT_FOUND", "User not found");
+  if (account.status === "suspended") throw new AppError(400, "ALREADY_SUSPENDED", "Account is already suspended");
+  if (account.status === "blocked") throw new AppError(403, "ACCOUNT_BLOCKED", "Account is blocked — contact support");
+  if (account.status === "deleted") throw new AppError(403, "ACCOUNT_DELETED", "Account not found");
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(accounts)
+      .set({ status: "suspended", isActive: false, suspendedAt: new Date(), updatedAt: new Date() })
+      .where(eq(accounts.id, userId));
+
+    // Revoke all refresh tokens so the session ends
+    await tx.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+  });
 }
