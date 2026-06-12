@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "dev:once": "tsx src/server.ts",
-    "dev:kill": "fuser -k 3002/tcp || true",
+    "dev:kill": "fuser -k 3003/tcp || true",
     "build": "tsc",
     "start": "node dist/server.js",
     "podman:run": "podman-compose -f docker-compose.local.yml up --build",
@@ -15,11 +15,13 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:seed": "tsx src/db/seed.ts",
     "db:studio": "drizzle-kit studio",
-    "dev:tunnel": "ngrok http --url=trichotomous-chrystal-dilly.ngrok-free.dev 3002"
+    "dev:tunnel": "ngrok http --url=trichotomous-chrystal-dilly.ngrok-free.dev 3003"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.2.0",
     "@paypal/paypal-server-sdk": "^2.4.0",
     "argon2": "^0.44.0",
     "dotenv": "^16.4.5",
@@ -29,11 +31,15 @@
     "ioredis": "^5.4.2",
     "jose": "^6.2.3",
     "mercadopago": "^3.1.0",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.10",
     "pg": "^8.13.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.11.10",
     "drizzle-kit": "^0.31.10",
     "tsx": "^4.11.0",

@@ -1,3 +1,4 @@
+import fastifyCors from "@fastify/cors";
 import fastifyCookie from "@fastify/cookie";
 import Fastify, { FastifyInstance, FastifyError } from "fastify";
 import postgresPlugin from "./plugins/postgres";
@@ -11,16 +12,40 @@ import { checkoutRoutes } from "./modules/checkout/checkout.routes";
 import { cartRoutes } from "./modules/cart/cart.routes";
 import { paymentsRoutes } from "./modules/payments/payments.routes";
 import { contentAccessRoutes } from "./modules/content-access/content-access.routes";
+import { adminRoutes } from "./modules/admin/admin.routes";
+import { scheduleRoutes } from "./modules/schedule/schedule.routes";
+import caldavPlugin from "./plugins/caldav";
+import mailerPlugin from "./plugins/mailer";
+import autoPurgePlugin from "./plugins/autoPurge";
 import { AppError } from "./lib/errors";
 import { env } from "./config/env";
 
+const ALLOWED_ORIGINS = [
+  "http://localhost:4321",
+  "http://localhost:8080",
+  ...(env.app.publicUrl ? [env.app.publicUrl] : []),
+];
+
 export const buildApp = (): FastifyInstance => {
   const app = Fastify({ logger: true });
+
+  app.register(fastifyCors, {
+    origin: (origin, cb) => {
+      if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+      cb(new Error("Not allowed by CORS"), false);
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  });
 
   app.register(fastifyCookie, { secret: env.server.stateSecret });
   app.register(postgresPlugin);
   app.register(redisPlugin);
   app.register(jwtPlugin);
+  app.register(caldavPlugin);
+  app.register(mailerPlugin);
+  app.register(autoPurgePlugin);
   app.register(requestLoggerHook);
 
   app.register(authRoutes);
@@ -30,6 +55,8 @@ export const buildApp = (): FastifyInstance => {
   app.register(cartRoutes);
   app.register(paymentsRoutes);
   app.register(contentAccessRoutes);
+  app.register(adminRoutes);
+  app.register(scheduleRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 

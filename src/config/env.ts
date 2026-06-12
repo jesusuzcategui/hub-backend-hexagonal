@@ -41,6 +41,20 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CALLBACK_URL: z.string().url().optional(),
 
+  CALDAV_URL: z.string().url(),
+  CALDAV_USERNAME: z.string().min(1),
+  CALDAV_PASSWORD: z.string().min(1),
+
+  JITSI_BASE_URL: z.string().url().default("https://talk.jesusuzcategui.com"),
+
+  SMTP_HOST: z.string().min(1),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_SECURE: z.string().default("false").transform((v) => v === "true"),
+  SMTP_USER: z.string().min(1),
+  SMTP_PASS: z.string().min(1),
+  SMTP_FROM: z.string().min(1).default("hello@vanjex.dev"),
+  SMTP_FROM_NAME: z.string().min(1).default("Jesus Uzcategui"),
+
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
   GITHUB_CALLBACK_URL: z.string().url().optional(),
@@ -103,6 +117,23 @@ export const env = {
     url: _env.STRAPI_URL,
     token: _env.STRAPI_TOKEN,
     webhookSecret: _env.STRAPI_WEBHOOK_SECRET,
+  },
+  caldav: {
+    url: _env.CALDAV_URL,
+    username: _env.CALDAV_USERNAME,
+    password: _env.CALDAV_PASSWORD,
+  },
+  jitsi: {
+    baseUrl: _env.JITSI_BASE_URL,
+  },
+  smtp: {
+    host: _env.SMTP_HOST,
+    port: _env.SMTP_PORT,
+    secure: _env.SMTP_SECURE,
+    user: _env.SMTP_USER,
+    pass: _env.SMTP_PASS,
+    from: _env.SMTP_FROM,
+    fromName: _env.SMTP_FROM_NAME,
   },
   oauth: {
     google: {
