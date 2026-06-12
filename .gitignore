@@ -5,3 +5,5 @@ dist/
 Caddyfile
 package-lock.json
 *.notes.md
+.private/
+cookies.txt
