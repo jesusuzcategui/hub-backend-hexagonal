@@ -1,7 +1,10 @@
 import { buildApp } from "./app";
 import { env } from "./config/env";
+import { runMigrations } from "./db/migrate";
 
 const start = async (): Promise<void> => {
+  await runMigrations();
+
   const app = buildApp();
 
   try {

@@ -14,6 +14,7 @@ import { paymentsRoutes } from "./modules/payments/payments.routes";
 import { contentAccessRoutes } from "./modules/content-access/content-access.routes";
 import { adminRoutes } from "./modules/admin/admin.routes";
 import { scheduleRoutes } from "./modules/schedule/schedule.routes";
+import { contactRoutes } from "./modules/contact/contact.routes";
 import caldavPlugin from "./plugins/caldav";
 import mailerPlugin from "./plugins/mailer";
 import autoPurgePlugin from "./plugins/autoPurge";
@@ -57,6 +58,7 @@ export const buildApp = (): FastifyInstance => {
   app.register(contentAccessRoutes);
   app.register(adminRoutes);
   app.register(scheduleRoutes);
+  app.register(contactRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 

@@ -29,7 +29,7 @@ services:
       POSTGRES_USER: hubuser
       POSTGRES_PASSWORD: hubpass
     ports:
-      - "5432:5432"
+      - "5441:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
