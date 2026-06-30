@@ -37,5 +37,19 @@
       "tag": "0004_weekly_slots",
       "breakpoints": true
     }
+    ,{
+      "idx": 5,
+      "version": "7",
+      "when": 1749686400000,
+      "tag": "0005_user_status",
+      "breakpoints": true
+    }
+    ,{
+      "idx": 6,
+      "version": "7",
+      "when": 1749772800000,
+      "tag": "0006_mentoring_requests",
+      "breakpoints": true
+    }
   ]
 }
