@@ -32,4 +32,4 @@ COPY mentoring-availability.json ./
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "echo 'Starting migrations...' && node dist/db/migrate.js && echo 'Migrations done. Starting seed...' && node dist/db/seed-mentoring.js && echo 'Seed done. Starting server...' && node dist/server.js"]
+CMD ["node", "dist/server.js"]
