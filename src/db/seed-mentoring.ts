@@ -6,6 +6,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
 import * as schema from "./schema/index.js";
 import { weeklySlots } from "./schema/scheduling.js";
+import { accounts } from "./schema/users.js";
 import { env } from "../config/env.js";
 
 interface SlotEntry {
@@ -25,6 +26,19 @@ async function main() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const db = drizzle(pool, { schema });
   const teacherId = env.mentoring.teacherId;
+
+  // Ensure teacher account exists (FK required by weekly_slots.teacher_id)
+  await db
+    .insert(accounts)
+    .values({
+      id: teacherId,
+      email: "hola@jesusuzcategui.com",
+      displayName: "Jesus Uzcategui",
+      emailVerified: true,
+      isActive: true,
+    })
+    .onConflictDoNothing({ target: accounts.id });
+  console.log("  teacher account ready");
 
   for (const slot of slots) {
     const existing = await db
