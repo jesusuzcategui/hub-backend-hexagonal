@@ -1,11 +1,25 @@
 import "dotenv/config";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
 import * as schema from "./schema/index.js";
 import { weeklySlots } from "./schema/scheduling.js";
 import { env } from "../config/env.js";
-import slots from "../../mentoring-availability.json" assert { type: "json" };
+
+interface SlotEntry {
+  id: string;
+  day: string;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+  is_active: boolean;
+}
+
+const slots: SlotEntry[] = JSON.parse(
+  readFileSync(resolve(process.cwd(), "mentoring-availability.json"), "utf8"),
+);
 
 async function main() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
