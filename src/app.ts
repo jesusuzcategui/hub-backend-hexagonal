@@ -15,6 +15,7 @@ import { contentAccessRoutes } from "./modules/content-access/content-access.rou
 import { adminRoutes } from "./modules/admin/admin.routes";
 import { scheduleRoutes } from "./modules/schedule/schedule.routes";
 import { contactRoutes } from "./modules/contact/contact.routes";
+import { portfolioRoutes } from "./modules/portfolio/portfolio.routes";
 import caldavPlugin from "./plugins/caldav";
 import mailerPlugin from "./plugins/mailer";
 import autoPurgePlugin from "./plugins/autoPurge";
@@ -25,6 +26,7 @@ const ALLOWED_ORIGINS = [
   "http://localhost:4321",
   "http://localhost:8080",
   ...(env.app.publicUrl ? [env.app.publicUrl] : []),
+  ...(env.mentoring.portfolioOrigin ? [env.mentoring.portfolioOrigin] : []),
 ];
 
 export const buildApp = (): FastifyInstance => {
@@ -59,6 +61,7 @@ export const buildApp = (): FastifyInstance => {
   app.register(adminRoutes);
   app.register(scheduleRoutes);
   app.register(contactRoutes);
+  app.register(portfolioRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 

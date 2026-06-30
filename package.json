@@ -16,6 +16,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx src/db/seed.ts",
+    "db:seed-mentoring": "tsx src/db/seed-mentoring.ts",
     "db:studio": "drizzle-kit studio",
     "dev:tunnel": "ngrok http --url=trichotomous-chrystal-dilly.ngrok-free.dev 3003"
   },

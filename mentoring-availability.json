@@ -1,0 +1,98 @@
+[
+  {
+    "id": "a1b2c3d4-0001-4000-a000-000000000001",
+    "day": "Lunes",
+    "day_of_week": 1,
+    "start_time": "05:00",
+    "end_time": "07:30",
+    "is_active": true
+  },
+  {
+    "id": "a1b2c3d4-0002-4000-a000-000000000002",
+    "day": "Lunes",
+    "day_of_week": 1,
+    "start_time": "17:00",
+    "end_time": "19:30",
+    "is_active": true
+  },
+  {
+    "id": "a1b2c3d4-0003-4000-a000-000000000003",
+    "day": "Martes",
+    "day_of_week": 2,
+    "start_time": "05:00",
+    "end_time": "07:30",
+    "is_active": true
+  },
+  {
+    "id": "a1b2c3d4-0004-4000-a000-000000000004",
+    "day": "Martes",
+    "day_of_week": 2,
+    "start_time": "17:00",
+    "end_time": "19:30",
+    "is_active": true
+  },
+  {
+    "id": "a1b2c3d4-0005-4000-a000-000000000005",
+    "day": "Miércoles",
+    "day_of_week": 3,
+    "start_time": "05:00",
+    "end_time": "07:30",
+    "is_active": true
+  },
+  {
+    "id": "a1b2c3d4-0006-4000-a000-000000000006",
+    "day": "Miércoles",
+    "day_of_week": 3,
+    "start_time": "17:00",
+    "end_time": "19:30",
+    "is_active": true
+  },
+  {
+    "id": "a1b2c3d4-0007-4000-a000-000000000007",
+    "day": "Jueves",
+    "day_of_week": 4,
+    "start_time": "05:00",
+    "end_time": "07:30",
+    "is_active": true
+  },
+  {
+    "id": "a1b2c3d4-0008-4000-a000-000000000008",
+    "day": "Jueves",
+    "day_of_week": 4,
+    "start_time": "17:00",
+    "end_time": "19:30",
+    "is_active": true
+  },
+  {
+    "id": "a1b2c3d4-0009-4000-a000-000000000009",
+    "day": "Viernes",
+    "day_of_week": 5,
+    "start_time": "05:00",
+    "end_time": "07:30",
+    "is_active": true
+  },
+  {
+    "id": "a1b2c3d4-0010-4000-a000-000000000010",
+    "day": "Viernes",
+    "day_of_week": 5,
+    "start_time": "17:00",
+    "end_time": "19:30",
+    "is_active": true
+  },
+  {
+    "id": "a1b2c3d4-0011-4000-a000-000000000011",
+    "day": "Sabado",
+    "day_of_week": 6,
+    "start_time": "07:00",
+    "end_time": "12:30",
+    "is_active": true
+  },
+  {
+    "id": "a1b2c3d4-0012-4000-a000-000000000012",
+    "day": "Sabado",
+    "day_of_week": 6,
+    "start_time": "15:00",
+    "end_time": "18:00",
+    "is_active": true
+  }
+]

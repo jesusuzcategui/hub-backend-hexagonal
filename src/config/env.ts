@@ -47,6 +47,9 @@ const envSchema = z.object({
 
   JITSI_BASE_URL: z.string().url().default("https://talk.jesusuzcategui.com"),
 
+  MENTORING_TEACHER_ID: z.string().uuid(),
+  PORTFOLIO_ORIGIN: z.string().url().optional(),
+
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
   SMTP_SECURE: z.string().default("false").transform((v) => v === "true"),
@@ -125,6 +128,10 @@ export const env = {
   },
   jitsi: {
     baseUrl: _env.JITSI_BASE_URL,
+  },
+  mentoring: {
+    teacherId: _env.MENTORING_TEACHER_ID,
+    portfolioOrigin: _env.PORTFOLIO_ORIGIN,
   },
   smtp: {
     host: _env.SMTP_HOST,

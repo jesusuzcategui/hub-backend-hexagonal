@@ -111,3 +111,26 @@ export const bookings = schedulingSchema.table(
     index("idx_bookings_status").on(table.status),
   ],
 );
+
+export const mentoringRequests = schedulingSchema.table(
+  "mentoring_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    whatsapp: text("whatsapp"),
+    type: text("type").notNull(), // wordpress | shopify | custom | quote
+    message: text("message"),
+    slotId: text("slot_id").notNull(), // composite: weeklySlotId_YYYYMMDD_HHMM
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    gcalEventId: text("gcal_event_id"),
+    status: text("status").notNull().default("pending"), // pending | confirmed | cancelled
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_mentoring_requests_slot_id").on(table.slotId),
+    index("idx_mentoring_requests_starts_at").on(table.startsAt),
+    index("idx_mentoring_requests_status").on(table.status),
+  ],
+);
