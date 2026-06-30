@@ -51,5 +51,12 @@
       "tag": "0006_mentoring_requests",
       "breakpoints": true
     }
+    ,{
+      "idx": 7,
+      "version": "7",
+      "when": 1749859200000,
+      "tag": "0007_repair_user_status",
+      "breakpoints": true
+    }
   ]
 }
