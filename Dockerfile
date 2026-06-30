@@ -32,4 +32,4 @@ COPY mentoring-availability.json ./
 
 EXPOSE 3000
 
-CMD ["node", "dist/server.js"]
+CMD ["sh", "-c", "node dist/db/migrate.js && node dist/db/seed-mentoring.js && node dist/server.js"]
