@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
@@ -8,4 +9,11 @@ export async function runMigrations(): Promise<void> {
   const db = drizzle(pool);
   await migrate(db, { migrationsFolder: "./drizzle/migrations" });
   await pool.end();
+}
+
+// Run as standalone script
+if (require.main === module) {
+  runMigrations()
+    .then(() => { console.log("Migrations applied."); process.exit(0); })
+    .catch((err) => { console.error(err); process.exit(1); });
 }
