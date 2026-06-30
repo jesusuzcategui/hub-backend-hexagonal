@@ -5,7 +5,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { env } from "../config/env";
 
 async function repairSchema(pool: Pool): Promise<void> {
-  // Ensures DDL from migration 0005 is actually applied regardless of tracking table state
+  // 0005: account_status enum + columns
   await pool.query(`
     DO $$ BEGIN
       IF NOT EXISTS (
@@ -20,6 +20,26 @@ async function repairSchema(pool: Pool): Promise<void> {
   await pool.query(`ALTER TABLE users.accounts ADD COLUMN IF NOT EXISTS suspended_at timestamptz`);
   await pool.query(`ALTER TABLE users.accounts ADD COLUMN IF NOT EXISTS deleted_at timestamptz`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_accounts_status ON users.accounts USING btree (status)`);
+  // 0006: mentoring_requests table
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS scheduling.mentoring_requests (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      name text NOT NULL,
+      email text NOT NULL,
+      whatsapp text,
+      type text NOT NULL,
+      message text,
+      slot_id text NOT NULL,
+      starts_at timestamptz NOT NULL,
+      ends_at timestamptz NOT NULL,
+      gcal_event_id text,
+      status text NOT NULL DEFAULT 'pending',
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_mentoring_requests_slot_id ON scheduling.mentoring_requests (slot_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_mentoring_requests_starts_at ON scheduling.mentoring_requests (starts_at)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_mentoring_requests_status ON scheduling.mentoring_requests (status)`);
   console.log("[migrate] schema repair done.");
 }
 
