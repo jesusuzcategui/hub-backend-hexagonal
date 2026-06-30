@@ -5,9 +5,12 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { env } from "../config/env";
 
 export async function runMigrations(): Promise<void> {
+  console.log("[migrate] connecting to DB...");
   const pool = new Pool({ connectionString: env.database.url });
   const db = drizzle(pool);
+  console.log("[migrate] running migrations from ./drizzle/migrations");
   await migrate(db, { migrationsFolder: "./drizzle/migrations" });
+  console.log("[migrate] done.");
   await pool.end();
 }
 

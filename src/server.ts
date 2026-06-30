@@ -3,7 +3,12 @@ import { env } from "./config/env";
 import { runMigrations } from "./db/migrate";
 
 const start = async (): Promise<void> => {
-  await runMigrations();
+  try {
+    await runMigrations();
+  } catch (err) {
+    console.error("[migrate] FAILED:", err);
+    process.exit(1);
+  }
 
   const app = buildApp();
 
