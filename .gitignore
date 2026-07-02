@@ -2,6 +2,7 @@ certs/*
 node_modules/
 dist/
 .env
+.env.staging
 Caddyfile
 package-lock.json
 *.notes.md
