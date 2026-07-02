@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      PORT: 3000
+      PORT: "${PORT}"
       STATE_SECRET: "${STATE_SECRET}"
       ALLOWED_REDIRECT_HOSTS: "${ALLOWED_REDIRECT_HOSTS}"
       DATABASE_URL: "${DATABASE_URL}"
