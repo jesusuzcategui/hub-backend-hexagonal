@@ -2,7 +2,7 @@ import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { env } from "../../config/env.js";
 import { bookings, mentoringRequests, weeklySlots } from "../../db/schema/scheduling.js";
-import type { BookSlotBody } from "./portfolio.schemas.js";
+import type { BookSlotBody, SubmitReviewBody } from "./portfolio.schemas.js";
 import "../../plugins/caldav.js";
 import "../../plugins/mailer.js";
 
@@ -414,4 +414,26 @@ ${message ? `<h3 style="margin:20px 0 8px">Mensaje</h3><p style="white-space:pre
   }
 
   return { id: requestId!, startsAt: startsAt.toISOString() };
+}
+
+export async function submitReview(body: SubmitReviewBody): Promise<void> {
+  const res = await fetch(`${env.strapi.url}/api/reviews`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${env.strapi.token}`,
+    },
+    body: JSON.stringify({
+      data: {
+        author_name: body.author_name,
+        rating: body.rating,
+        message: body.message,
+        publishedAt: null,
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Strapi error: ${res.status}`);
+  }
 }
