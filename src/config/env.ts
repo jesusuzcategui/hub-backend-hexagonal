@@ -39,7 +39,7 @@ const envSchema = z.object({
 
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
-  GOOGLE_CALLBACK_URL: z.string().url().optional(),
+  GOOGLE_CALLBACK_URL: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
 
   CALDAV_URL: z.string().url(),
   CALDAV_USERNAME: z.string().min(1),
@@ -48,7 +48,7 @@ const envSchema = z.object({
   JITSI_BASE_URL: z.string().url().default("https://talk.jesusuzcategui.com"),
 
   MENTORING_TEACHER_ID: z.string().uuid(),
-  PORTFOLIO_ORIGIN: z.string().url().optional(),
+  PORTFOLIO_ORIGIN: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
 
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
@@ -60,7 +60,7 @@ const envSchema = z.object({
 
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
-  GITHUB_CALLBACK_URL: z.string().url().optional(),
+  GITHUB_CALLBACK_URL: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
 });
 
 const parsed = envSchema.safeParse(process.env);
