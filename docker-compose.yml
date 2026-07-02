@@ -5,10 +5,10 @@ services:
       dockerfile: Dockerfile
     environment:
       PORT: 3000
-      STATE_SECRET: '${STATE_SECRET}'
-      ALLOWED_REDIRECT_HOSTS: '${ALLOWED_REDIRECT_HOSTS}'
-      DATABASE_URL: '${DATABASE_URL}'
-      REDIS_URL: '${REDIS_URL}'
+      STATE_SECRET: "${STATE_SECRET}"
+      ALLOWED_REDIRECT_HOSTS: "${ALLOWED_REDIRECT_HOSTS}"
+      DATABASE_URL: "${DATABASE_URL}"
+      REDIS_URL: "${REDIS_URL}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -19,11 +19,11 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: '${POSTGRES_DB}'
-      POSTGRES_USER: '${POSTGRES_USER}'
-      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}'
+      POSTGRES_DB: "${POSTGRES_DB}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
     ports:
-      - "5441:5432"
+      - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
