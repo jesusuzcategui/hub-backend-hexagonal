@@ -46,10 +46,10 @@ async function repairSchema(pool: Pool): Promise<void> {
 export async function runMigrations(): Promise<void> {
   console.log("[migrate] connecting to DB...");
   const pool = new Pool({ connectionString: env.database.url });
-  await repairSchema(pool);
   const db = drizzle(pool);
   console.log("[migrate] running migrations from ./drizzle/migrations");
   await migrate(db, { migrationsFolder: "./drizzle/migrations" });
+  await repairSchema(pool);
   console.log("[migrate] done.");
   await pool.end();
 }
