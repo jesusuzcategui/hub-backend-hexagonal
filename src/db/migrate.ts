@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { env } from "../config/env";
+import { seedMentoring } from "./seed-mentoring";
 
 async function repairSchema(pool: Pool): Promise<void> {
   // 0005: account_status enum + columns
@@ -50,6 +51,7 @@ export async function runMigrations(): Promise<void> {
   console.log("[migrate] running migrations from ./drizzle/migrations");
   await migrate(db, { migrationsFolder: "./drizzle/migrations" });
   await repairSchema(pool);
+  await seedMentoring(pool);
   console.log("[migrate] done.");
   await pool.end();
 }
