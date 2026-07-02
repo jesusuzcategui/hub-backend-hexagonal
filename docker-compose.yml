@@ -3,12 +3,53 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    ports:
+      - "${HUB_PORT:-3000}:3000"
     environment:
-      PORT: "${PORT}"
-      STATE_SECRET: "${STATE_SECRET}"
-      ALLOWED_REDIRECT_HOSTS: "${ALLOWED_REDIRECT_HOSTS}"
-      DATABASE_URL: "${DATABASE_URL}"
-      REDIS_URL: "${REDIS_URL}"
+      PORT: 3000
+      STATE_SECRET: "${STATE_SECRET:?STATE_SECRET is required}"
+      ALLOWED_REDIRECT_HOSTS: "${ALLOWED_REDIRECT_HOSTS:-}"
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}"
+      JWT_ACCESS_EXPIRY_SECONDS: "${JWT_ACCESS_EXPIRY_SECONDS:-900}"
+      JWT_REFRESH_EXPIRY_SECONDS: "${JWT_REFRESH_EXPIRY_SECONDS:-2592000}"
+      COOKIE_SECURE: "${COOKIE_SECURE:-true}"
+      COOKIE_DOMAIN: "${COOKIE_DOMAIN:-}"
+      APP_PUBLIC_URL: "${APP_PUBLIC_URL:-}"
+      MP_ACCESS_TOKEN: "${MP_ACCESS_TOKEN:-}"
+      MP_WEBHOOK_SECRET: "${MP_WEBHOOK_SECRET:-}"
+      MP_SUCCESS_URL: "${MP_SUCCESS_URL:-}"
+      MP_FAILURE_URL: "${MP_FAILURE_URL:-}"
+      MP_PENDING_URL: "${MP_PENDING_URL:-}"
+      PAYPAL_CLIENT_ID: "${PAYPAL_CLIENT_ID:-}"
+      PAYPAL_CLIENT_SECRET: "${PAYPAL_CLIENT_SECRET:-}"
+      PAYPAL_MODE: "${PAYPAL_MODE:-sandbox}"
+      PAYPAL_WEBHOOK_ID: "${PAYPAL_WEBHOOK_ID:-}"
+      PAYPAL_SUCCESS_URL: "${PAYPAL_SUCCESS_URL:-}"
+      PAYPAL_CANCEL_URL: "${PAYPAL_CANCEL_URL:-}"
+      STRAPI_URL: "${STRAPI_URL:?STRAPI_URL is required}"
+      STRAPI_TOKEN: "${STRAPI_TOKEN:?STRAPI_TOKEN is required}"
+      STRAPI_WEBHOOK_SECRET: "${STRAPI_WEBHOOK_SECRET:?STRAPI_WEBHOOK_SECRET is required}"
+      CALDAV_URL: "${CALDAV_URL:?CALDAV_URL is required}"
+      CALDAV_USERNAME: "${CALDAV_USERNAME:?CALDAV_USERNAME is required}"
+      CALDAV_PASSWORD: "${CALDAV_PASSWORD:?CALDAV_PASSWORD is required}"
+      JITSI_BASE_URL: "${JITSI_BASE_URL:-https://talk.jesusuzcategui.com}"
+      MENTORING_TEACHER_ID: "${MENTORING_TEACHER_ID:?MENTORING_TEACHER_ID is required}"
+      PORTFOLIO_ORIGIN: "${PORTFOLIO_ORIGIN:-}"
+      SMTP_HOST: "${SMTP_HOST:?SMTP_HOST is required}"
+      SMTP_PORT: "${SMTP_PORT:-465}"
+      SMTP_SECURE: "${SMTP_SECURE:-true}"
+      SMTP_USER: "${SMTP_USER:?SMTP_USER is required}"
+      SMTP_PASS: "${SMTP_PASS:?SMTP_PASS is required}"
+      SMTP_FROM: "${SMTP_FROM:-}"
+      SMTP_FROM_NAME: "${SMTP_FROM_NAME:-}"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
+      GOOGLE_CALLBACK_URL: "${GOOGLE_CALLBACK_URL:-}"
+      GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID:-}"
+      GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET:-}"
+      GITHUB_CALLBACK_URL: "${GITHUB_CALLBACK_URL:-}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -19,11 +60,11 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: "${POSTGRES_DB}"
-      POSTGRES_USER: "${POSTGRES_USER}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB:?POSTGRES_DB is required}"
+      POSTGRES_USER: "${POSTGRES_USER:?POSTGRES_USER is required}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -35,6 +76,8 @@ services:
 
   redis:
     image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped

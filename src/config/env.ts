@@ -20,18 +20,18 @@ const envSchema = z.object({
   COOKIE_DOMAIN: z.string().optional(),
 
   APP_PUBLIC_URL: z.string().url().optional(),
-  MP_ACCESS_TOKEN: z.string().min(1),
-  MP_WEBHOOK_SECRET: z.string().min(32),
-  MP_SUCCESS_URL: z.string().url(),
-  MP_FAILURE_URL: z.string().url(),
-  MP_PENDING_URL: z.string().url(),
+  MP_ACCESS_TOKEN: z.string().default(""),
+  MP_WEBHOOK_SECRET: z.string().default(""),
+  MP_SUCCESS_URL: z.string().default(""),
+  MP_FAILURE_URL: z.string().default(""),
+  MP_PENDING_URL: z.string().default(""),
 
-  PAYPAL_CLIENT_ID: z.string().min(1),
-  PAYPAL_CLIENT_SECRET: z.string().min(1),
+  PAYPAL_CLIENT_ID: z.string().default(""),
+  PAYPAL_CLIENT_SECRET: z.string().default(""),
   PAYPAL_MODE: z.enum(["sandbox", "live"]).default("sandbox"),
-  PAYPAL_WEBHOOK_ID: z.string().optional(),
-  PAYPAL_SUCCESS_URL: z.string().url(),
-  PAYPAL_CANCEL_URL: z.string().url(),
+  PAYPAL_WEBHOOK_ID: z.string().optional().or(z.literal('')).transform(v => v || undefined),
+  PAYPAL_SUCCESS_URL: z.string().default(""),
+  PAYPAL_CANCEL_URL: z.string().default(""),
 
   STRAPI_URL: z.string().url(),
   STRAPI_TOKEN: z.string().min(1),
@@ -39,7 +39,7 @@ const envSchema = z.object({
 
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
-  GOOGLE_CALLBACK_URL: z.string().url().optional(),
+  GOOGLE_CALLBACK_URL: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
 
   CALDAV_URL: z.string().url(),
   CALDAV_USERNAME: z.string().min(1),
@@ -48,7 +48,7 @@ const envSchema = z.object({
   JITSI_BASE_URL: z.string().url().default("https://talk.jesusuzcategui.com"),
 
   MENTORING_TEACHER_ID: z.string().uuid(),
-  PORTFOLIO_ORIGIN: z.string().url().optional(),
+  PORTFOLIO_ORIGIN: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
 
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
@@ -60,7 +60,7 @@ const envSchema = z.object({
 
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
-  GITHUB_CALLBACK_URL: z.string().url().optional(),
+  GITHUB_CALLBACK_URL: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
 });
 
 const parsed = envSchema.safeParse(process.env);

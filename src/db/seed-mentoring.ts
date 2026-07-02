@@ -22,8 +22,8 @@ const slots: SlotEntry[] = JSON.parse(
   readFileSync(resolve(process.cwd(), "mentoring-availability.json"), "utf8"),
 );
 
-async function main() {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+export async function seedMentoring(existingPool?: import("pg").Pool): Promise<void> {
+  const pool = existingPool ?? new Pool({ connectionString: process.env.DATABASE_URL });
   const db = drizzle(pool, { schema });
   const teacherId = env.mentoring.teacherId;
 
@@ -65,7 +65,11 @@ async function main() {
   }
 
   console.log("Mentoring slots seeded.");
-  await pool.end();
+  if (!existingPool) await pool.end();
+}
+
+async function main() {
+  await seedMentoring();
 }
 
 main().catch((err) => {
