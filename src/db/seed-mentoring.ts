@@ -68,8 +68,23 @@ export async function seedMentoring(existingPool?: import("pg").Pool): Promise<v
   if (!existingPool) await pool.end();
 }
 
+async function waitForTable(pool: Pool, maxWaitMs = 30_000): Promise<void> {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema = 'users' AND table_name = 'accounts'`
+    );
+    if (rows.length > 0) return;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error("Timeout: users.accounts not ready after 30s");
+}
+
 async function main() {
-  await seedMentoring();
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  await waitForTable(pool);
+  await seedMentoring(pool);
+  await pool.end();
 }
 
 main().catch((err) => {
