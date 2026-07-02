@@ -17,3 +17,17 @@ export const bookSlotSchema = z
   .refine((d) => !d.website, { message: "bot detected" });
 
 export type BookSlotBody = z.infer<typeof bookSlotSchema>;
+
+export const submitReviewSchema = z
+  .object({
+    author_name: z.string().min(2).max(120).trim(),
+    rating: z.number().min(1).max(5),
+    message: z.string().min(10).max(2000).refine(
+      (v) => !/<[a-z!\/]/i.test(v),
+      "Invalid characters in message"
+    ),
+    website: z.string().max(0).optional(), // honeypot
+  })
+  .refine((d) => !d.website, { message: "bot detected" });
+
+export type SubmitReviewBody = z.infer<typeof submitReviewSchema>;
