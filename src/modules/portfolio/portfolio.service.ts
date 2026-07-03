@@ -417,7 +417,7 @@ ${message ? `<h3 style="margin:20px 0 8px">Mensaje</h3><p style="white-space:pre
 }
 
 export async function submitReview(body: SubmitReviewBody): Promise<void> {
-  const res = await fetch(`${env.strapi.url}/api/reviews`, {
+  const res = await fetch(`${env.strapi.url}/api/reviews?status=draft`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -428,7 +428,6 @@ export async function submitReview(body: SubmitReviewBody): Promise<void> {
         author_name: body.author_name,
         rating: body.rating,
         message: body.message,
-        publishedAt: null,
       },
     }),
   });
