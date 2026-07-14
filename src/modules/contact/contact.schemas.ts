@@ -9,6 +9,7 @@ export const contactSchema = z
     budget: z.enum(["500-2k", "2k-5k", "5k-10k", "10k-25k", "25k+"]),
     // honeypot — must be empty; bots fill it, humans skip it
     website: z.string().max(0).optional(),
+    captchaToken: z.string().optional(),
   })
   .refine((d) => !d.website, { message: "bot detected" });
 

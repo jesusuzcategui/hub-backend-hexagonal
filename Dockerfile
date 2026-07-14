@@ -12,6 +12,7 @@ RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
 COPY src ./src
 COPY drizzle ./drizzle
+COPY mentoring-availability.json ./
 
 RUN pnpm run build
 
