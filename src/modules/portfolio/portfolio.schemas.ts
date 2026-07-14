@@ -13,6 +13,7 @@ export const bookSlotSchema = z
     ).optional(),
     locale: z.enum(["es", "en"]).optional().default("es"),
     website: z.string().max(0).optional(), // honeypot
+    captchaToken: z.string().optional(),
   })
   .refine((d) => !d.website, { message: "bot detected" });
 

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { bookSlotSchema, submitReviewSchema } from "./portfolio.schemas.js";
 import { createMentoringRequest, getPublicSlots, submitReview } from "./portfolio.service.js";
+import { verifyCaptchaToken } from "./portfolio.captcha.js";
 
 export async function portfolioRoutes(fastify: FastifyInstance): Promise<void> {
   await fastify.register(rateLimit, {
@@ -27,11 +28,14 @@ export async function portfolioRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     try {
+      // Validate captcha token
+      await verifyCaptchaToken(parsed.data.captchaToken);
+
       const result = await createMentoringRequest(fastify, parsed.data);
       reply.code(201).send({ data: result });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Booking failed";
-      const code = msg.includes("already booked") ? 409 : msg.includes("not found") ? 404 : 400;
+      const code = msg.includes("already booked") ? 409 : msg.includes("not found") ? 404 : msg.includes("Captcha") ? 400 : 400;
       reply.code(code).send({ error: msg });
     }
   });
