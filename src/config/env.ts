@@ -61,6 +61,9 @@ const envSchema = z.object({
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
   GITHUB_CALLBACK_URL: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
+
+  CAP_SITE_KEY: z.string().optional(),
+  CAP_PRIVATE_KEY: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -153,5 +156,9 @@ export const env = {
       clientSecret: _env.GITHUB_CLIENT_SECRET,
       callbackUrl: _env.GITHUB_CALLBACK_URL,
     },
+  },
+  captcha: {
+    siteKey: _env.CAP_SITE_KEY,
+    privateKey: _env.CAP_PRIVATE_KEY,
   },
 } as const;

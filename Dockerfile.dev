@@ -10,6 +10,9 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install
 
 COPY tsconfig.json ./
+COPY mentoring-availability.json ./
+COPY drizzle ./drizzle
+COPY drizzle/migrations/meta ./drizzle/migrations/meta
 
 EXPOSE 3000
 
