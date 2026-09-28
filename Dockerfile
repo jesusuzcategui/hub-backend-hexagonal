@@ -30,6 +30,7 @@ RUN pnpm install --frozen-lockfile --prod
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/drizzle ./drizzle
 COPY mentoring-availability.json ./
+COPY scripts ./scripts
 
 EXPOSE 3000
 

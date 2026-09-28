@@ -362,6 +362,103 @@ export async function deleteWeeklySlot(fastify: FastifyInstance, id: string) {
   await db.delete(weeklySlots).where(eq(weeklySlots.id, id));
 }
 
+export async function deactivateWeeklySlot(fastify: FastifyInstance, id: string) {
+  const db = fastify.drizzle;
+
+  const slot = await db.query.weeklySlots.findFirst({
+    where: eq(weeklySlots.id, id),
+    columns: { id: true },
+  });
+
+  if (!slot) throw new AppError(404, "SLOT_NOT_FOUND", "Weekly slot not found");
+
+  const [updated] = await db
+    .update(weeklySlots)
+    .set({ isActive: false })
+    .where(eq(weeklySlots.id, id))
+    .returning({
+      id: weeklySlots.id,
+      dayOfWeek: weeklySlots.dayOfWeek,
+      startTime: weeklySlots.startTime,
+      endTime: weeklySlots.endTime,
+      isActive: weeklySlots.isActive,
+      createdAt: weeklySlots.createdAt,
+    });
+
+  const affectedBookings = await db
+    .select({
+      id: bookings.id,
+      startsAt: bookings.startsAt,
+      studentEmail: accounts.email,
+      studentName: accounts.displayName,
+    })
+    .from(bookings)
+    .innerJoin(accounts, eq(accounts.id, bookings.studentId))
+    .where(
+      and(
+        eq(bookings.weeklySlotId, id),
+        sql`${bookings.status} NOT IN ('cancelled', 'completed')`,
+        sql`${bookings.startsAt} > NOW()`,
+      ),
+    );
+
+  let notifiedBookings = 0;
+
+  for (const booking of affectedBookings) {
+    try {
+      const bogotaDate = new Intl.DateTimeFormat("es-CO", {
+        timeZone: "America/Bogota",
+        dateStyle: "full",
+        timeStyle: "short",
+      }).format(booking.startsAt);
+
+      await fastify.mailer.sendMail({
+        from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
+        to: booking.studentEmail,
+        subject: "📅 Cambio en el horario recurrente de tus asesorías",
+        html: `
+          <p>Hola ${booking.studentName},</p>
+          <p>Tu clase agendada para el <strong>${bogotaDate} (Colombia)</strong> se mantiene sin cambios, no ha sido cancelada.</p>
+          <p>Sin embargo, este horario recurrente semanal dejará de ofrecerse a partir de ahora, por lo que no podrás volver a agendar automáticamente en este mismo horario en el futuro.</p>
+          <p>Si deseas continuar con tus asesorías, podrás elegir otro horario disponible cuando lo necesites.</p>
+          <p>— ${env.smtp.fromName}</p>
+        `,
+      });
+      notifiedBookings += 1;
+    } catch (err) {
+      fastify.log.error({ err }, "Failed to send weekly slot deactivation email");
+    }
+  }
+
+  return { slot: updated, notifiedBookings };
+}
+
+export async function reactivateWeeklySlot(fastify: FastifyInstance, id: string) {
+  const db = fastify.drizzle;
+
+  const slot = await db.query.weeklySlots.findFirst({
+    where: eq(weeklySlots.id, id),
+    columns: { id: true },
+  });
+
+  if (!slot) throw new AppError(404, "SLOT_NOT_FOUND", "Weekly slot not found");
+
+  const [updated] = await db
+    .update(weeklySlots)
+    .set({ isActive: true })
+    .where(eq(weeklySlots.id, id))
+    .returning({
+      id: weeklySlots.id,
+      dayOfWeek: weeklySlots.dayOfWeek,
+      startTime: weeklySlots.startTime,
+      endTime: weeklySlots.endTime,
+      isActive: weeklySlots.isActive,
+      createdAt: weeklySlots.createdAt,
+    });
+
+  return updated;
+}
+
 export async function listStudentCredits(fastify: FastifyInstance, userId: string) {
   return fastify.drizzle
     .select({
