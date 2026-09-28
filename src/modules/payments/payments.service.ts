@@ -265,11 +265,16 @@ export async function checkout(fastify: FastifyInstance, input: CheckoutInput): 
     reference: order.id,
     amountMinor,
     currency,
+    // The thank-you page is a single URL shape (/order/:id) for every provider —
+    // ePayco and PayPal don't know our internal order id, so we append it to their
+    // configured base return URL ourselves. ePayco settles via webhook regardless
+    // of this URL (purely cosmetic for it); PayPal needs the page to see its own
+    // ?token= and call /paypal/capture before the order is actually paid.
     returnUrl:
       input.paymentMethod === "epayco"
-        ? env.epayco.successUrl
+        ? `${env.epayco.successUrl}/${order.id}`
         : input.paymentMethod === "paypal"
-          ? env.paypal.successUrl
+          ? `${env.paypal.successUrl}/${order.id}`
           : undefined,
     confirmationUrl: input.paymentMethod === "epayco" ? env.epayco.confirmationUrl : undefined,
   });
