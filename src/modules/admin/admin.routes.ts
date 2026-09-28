@@ -16,6 +16,8 @@ import {
   listWeeklySlots,
   createWeeklySlot,
   deleteWeeklySlot,
+  deactivateWeeklySlot,
+  reactivateWeeklySlot,
   listStudentCredits,
   grantCreditsToStudent,
   listStudentActiveCredits,
@@ -144,6 +146,18 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
     await deleteWeeklySlot(fastify, id);
     reply.send({ data: { deleted: true } });
+  });
+
+  fastify.patch("/admin/weekly-slots/:id", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { isActive?: boolean };
+    if (typeof body.isActive !== "boolean") {
+      throw new AppError(400, "MISSING_FIELDS", "isActive is required and must be a boolean");
+    }
+    const data = body.isActive
+      ? await reactivateWeeklySlot(fastify, id)
+      : await deactivateWeeklySlot(fastify, id);
+    reply.send({ data });
   });
 
   // Credits
