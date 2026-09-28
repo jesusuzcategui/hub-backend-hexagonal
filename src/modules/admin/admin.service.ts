@@ -10,6 +10,7 @@ import {
   classCredits,
   products,
   refreshTokens,
+  coupons,
 } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import "../../plugins/caldav.js";
@@ -237,6 +238,40 @@ export async function cancelBooking(
   } catch (err) {
     fastify.log.error({ err }, "Failed to send cancellation email");
   }
+}
+
+// Attendance is marked after the class happens. The credit was already consumed at
+// booking time (see schedule.service.ts), so marking `attended: false` does NOT refund
+// it — a no-show still spends the credit, same policy as most mentoring/coaching platforms.
+export async function markAttendance(
+  fastify: FastifyInstance,
+  bookingId: string,
+  attended: boolean,
+) {
+  const db = fastify.drizzle;
+
+  const booking = await db.query.bookings.findFirst({
+    where: eq(bookings.id, bookingId),
+    columns: { id: true, status: true },
+  });
+
+  if (!booking) throw new AppError(404, "BOOKING_NOT_FOUND", "Booking not found");
+  if (booking.status === "cancelled") {
+    throw new AppError(400, "BOOKING_CANCELLED", "Cannot mark attendance on a cancelled booking");
+  }
+
+  const [updated] = await db
+    .update(bookings)
+    .set({ status: attended ? "completed" : "no_show", updatedAt: new Date() })
+    .where(eq(bookings.id, bookingId))
+    .returning({
+      id: bookings.id,
+      status: bookings.status,
+      startsAt: bookings.startsAt,
+      endsAt: bookings.endsAt,
+    });
+
+  return updated;
 }
 
 export async function listAvailabilities(fastify: FastifyInstance) {
@@ -694,6 +729,79 @@ export async function validateTransfer(
   decision: "approve" | "reject",
 ) {
   return validateManualTransfer(fastify, orderId, decision);
+}
+
+// --- Coupons ------------------------------------------------------------------------
+
+export async function listCoupons(fastify: FastifyInstance) {
+  return fastify.drizzle.query.coupons.findMany({ orderBy: desc(coupons.createdAt) });
+}
+
+export async function createCoupon(
+  fastify: FastifyInstance,
+  input: {
+    code: string;
+    type: "percent" | "fixed";
+    value: number;
+    currency?: string | null;
+    maxRedemptions?: number | null;
+    expiresAt?: Date | null;
+  },
+) {
+  const code = input.code.trim().toUpperCase();
+  if (!code) throw new AppError(400, "INVALID_CODE", "code is required");
+  if (input.type === "percent" && (input.value < 0 || input.value > 100)) {
+    throw new AppError(400, "INVALID_VALUE", "percent value must be between 0 and 100");
+  }
+  if (input.type === "fixed" && input.value < 0) {
+    throw new AppError(400, "INVALID_VALUE", "fixed value must be >= 0");
+  }
+
+  const existing = await fastify.drizzle.query.coupons.findFirst({
+    where: eq(coupons.code, code),
+    columns: { id: true },
+  });
+  if (existing) throw new AppError(409, "COUPON_EXISTS", "A coupon with this code already exists");
+
+  const [coupon] = await fastify.drizzle
+    .insert(coupons)
+    .values({
+      code,
+      type: input.type,
+      value: input.value,
+      currency: input.type === "fixed" ? (input.currency ?? null) : null,
+      maxRedemptions: input.maxRedemptions ?? null,
+      expiresAt: input.expiresAt ?? null,
+    })
+    .returning();
+
+  return coupon;
+}
+
+export async function deactivateCoupon(fastify: FastifyInstance, id: string) {
+  const db = fastify.drizzle;
+  const coupon = await db.query.coupons.findFirst({ where: eq(coupons.id, id), columns: { id: true } });
+  if (!coupon) throw new AppError(404, "COUPON_NOT_FOUND", "Coupon not found");
+
+  const [updated] = await db
+    .update(coupons)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(eq(coupons.id, id))
+    .returning();
+  return updated;
+}
+
+export async function reactivateCoupon(fastify: FastifyInstance, id: string) {
+  const db = fastify.drizzle;
+  const coupon = await db.query.coupons.findFirst({ where: eq(coupons.id, id), columns: { id: true } });
+  if (!coupon) throw new AppError(404, "COUPON_NOT_FOUND", "Coupon not found");
+
+  const [updated] = await db
+    .update(coupons)
+    .set({ isActive: true, updatedAt: new Date() })
+    .where(eq(coupons.id, id))
+    .returning();
+  return updated;
 }
 
 export { getAvailableSlots };

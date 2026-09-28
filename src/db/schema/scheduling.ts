@@ -1,4 +1,14 @@
-import { boolean, index, pgSchema, smallint, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  jsonb,
+  pgSchema,
+  smallint,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { accounts } from "./users";
 import { products } from "./ecommerce";
@@ -111,6 +121,24 @@ export const bookings = schedulingSchema.table(
     index("idx_bookings_starts_at").on(table.startsAt),
     index("idx_bookings_status").on(table.status),
   ],
+);
+
+// One note per booking (upsert on write), attachments stored on WebDAV — this table
+// only keeps pointers, same pattern as manual-transfer proofs in payments.service.ts.
+export const classNotes = schedulingSchema.table(
+  "class_notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    bookingId: uuid("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id").references(() => accounts.id, { onDelete: "set null" }),
+    content: text("content").notNull().default(""),
+    attachments: jsonb("attachments").notNull().default([]), // Array<{ filename: string; path: string; contentType: string }>
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("uq_class_notes_booking_id").on(table.bookingId)],
 );
 
 export const mentoringRequests = schedulingSchema.table(

@@ -79,5 +79,12 @@
       "tag": "0010_payments_core",
       "breakpoints": true
     }
+    ,{
+      "idx": 11,
+      "version": "7",
+      "when": 1790710000000,
+      "tag": "0011_class_notes",
+      "breakpoints": true
+    }
   ]
 }

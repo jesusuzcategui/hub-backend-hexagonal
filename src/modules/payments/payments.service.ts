@@ -1,5 +1,5 @@
 import path from "node:path";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { FastifyInstance } from "fastify";
 import {
   SystemClock,
@@ -538,7 +538,7 @@ async function applySettlementSideEffects(
     try {
       await fastify.drizzle
         .update(coupons)
-        .set({ redeemedCount: (await fastify.drizzle.query.coupons.findFirst({ where: eq(coupons.id, metadata.couponId), columns: { redeemedCount: true } }))!.redeemedCount + 1, updatedAt: new Date() })
+        .set({ redeemedCount: sql`${coupons.redeemedCount} + 1`, updatedAt: new Date() })
         .where(eq(coupons.id, metadata.couponId));
     } catch (err) {
       fastify.log.error({ err, orderId: order.id }, "Failed to increment coupon redemption on settlement");

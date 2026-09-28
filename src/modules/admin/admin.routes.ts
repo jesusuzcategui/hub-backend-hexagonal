@@ -10,6 +10,7 @@ import {
   deleteStudent,
   listBookings,
   cancelBooking,
+  markAttendance,
   listAvailabilities,
   createAvailability,
   deleteAvailability,
@@ -25,6 +26,10 @@ import {
   getAvailableSlots,
   listOrders,
   validateTransfer,
+  listCoupons,
+  createCoupon,
+  deactivateCoupon,
+  reactivateCoupon,
 } from "./admin.service";
 
 async function requireAdmin(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
@@ -111,6 +116,19 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     await cancelBooking(fastify, id, reason);
     reply.send({ data: { cancelled: true } });
   });
+
+  fastify.patch(
+    "/admin/bookings/:id/attendance",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { attended } = (req.body ?? {}) as { attended?: boolean };
+      if (typeof attended !== "boolean") {
+        throw new AppError(400, "MISSING_FIELDS", "attended (boolean) is required");
+      }
+      reply.send({ data: await markAttendance(fastify, id, attended) });
+    },
+  );
 
   // Availabilities
   fastify.get("/admin/availabilities", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
@@ -227,6 +245,55 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       }
       const result = await validateTransfer(fastify, id, decision);
       reply.send({ data: { outcome: result.outcome } });
+    },
+  );
+
+  // Coupons
+  fastify.get("/admin/coupons", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
+    reply.send({ data: await listCoupons(fastify) });
+  });
+
+  fastify.post("/admin/coupons", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      code?: string;
+      type?: "percent" | "fixed";
+      value?: number;
+      currency?: string;
+      maxRedemptions?: number;
+      expiresAt?: string;
+    };
+    if (!body.code || !body.type || body.value === undefined) {
+      throw new AppError(400, "MISSING_FIELDS", "code, type, and value are required");
+    }
+    if (body.type !== "percent" && body.type !== "fixed") {
+      throw new AppError(400, "INVALID_TYPE", "type must be percent or fixed");
+    }
+    const data = await createCoupon(fastify, {
+      code: body.code,
+      type: body.type,
+      value: body.value,
+      currency: body.currency ?? null,
+      maxRedemptions: body.maxRedemptions ?? null,
+      expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+    });
+    reply.status(201).send({ data });
+  });
+
+  fastify.post(
+    "/admin/coupons/:id/deactivate",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      reply.send({ data: await deactivateCoupon(fastify, id) });
+    },
+  );
+
+  fastify.post(
+    "/admin/coupons/:id/reactivate",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      reply.send({ data: await reactivateCoupon(fastify, id) });
     },
   );
 }

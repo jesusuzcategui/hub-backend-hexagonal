@@ -16,6 +16,7 @@ import { scheduleRoutes } from "./modules/schedule/schedule.routes";
 import { contactRoutes } from "./modules/contact/contact.routes";
 import { portfolioRoutes } from "./modules/portfolio/portfolio.routes";
 import { paymentsRoutes } from "./modules/payments/payments.routes";
+import { classNotesRoutes } from "./modules/class-notes/class-notes.routes";
 import caldavPlugin from "./plugins/caldav";
 import mailerPlugin from "./plugins/mailer";
 import webdavPlugin from "./plugins/webdav";
@@ -107,6 +108,7 @@ export const buildApp = (): FastifyInstance => {
   app.register(contactRoutes);
   app.register(portfolioRoutes);
   app.register(paymentsRoutes);
+  app.register(classNotesRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 
