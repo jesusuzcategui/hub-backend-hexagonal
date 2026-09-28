@@ -304,6 +304,7 @@ export interface PublicOrderStatusDto {
   locale: "en" | "es";
   productName: string | null;
   creditsCount: number | null;
+  paymentMethod: string | null;
 }
 
 /**
@@ -336,6 +337,9 @@ export async function getPublicOrderStatus(
     productName = product?.name ?? null;
   }
 
+  const { paymentAttemptRepository } = buildRepos(fastify);
+  const latestAttempt = await paymentAttemptRepository.findLatestByOrderId(orderId);
+
   return {
     orderId: order.id,
     status: order.status,
@@ -345,6 +349,7 @@ export async function getPublicOrderStatus(
     paidAt: order.paidAt ? order.paidAt.toISOString() : null,
     locale: metadata?.locale === "en" ? "en" : "es",
     productName,
+    paymentMethod: latestAttempt?.provider ?? null,
     creditsCount: metadata?.creditsCount ?? null,
   };
 }
