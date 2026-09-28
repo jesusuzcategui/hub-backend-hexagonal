@@ -13,7 +13,7 @@
     "day_of_week": 1,
     "start_time": "17:00",
     "end_time": "19:30",
-    "is_active": true
+    "is_active": false
   },
   {
     "id": "a1b2c3d4-0003-4000-a000-000000000003",
@@ -29,7 +29,7 @@
     "day_of_week": 2,
     "start_time": "17:00",
     "end_time": "19:30",
-    "is_active": true
+    "is_active": false
   },
   {
     "id": "a1b2c3d4-0005-4000-a000-000000000005",
@@ -45,7 +45,7 @@
     "day_of_week": 3,
     "start_time": "17:00",
     "end_time": "19:30",
-    "is_active": true
+    "is_active": false
   },
   {
     "id": "a1b2c3d4-0007-4000-a000-000000000007",
@@ -61,7 +61,7 @@
     "day_of_week": 4,
     "start_time": "17:00",
     "end_time": "19:30",
-    "is_active": true
+    "is_active": false
   },
   {
     "id": "a1b2c3d4-0009-4000-a000-000000000009",
@@ -77,7 +77,7 @@
     "day_of_week": 5,
     "start_time": "17:00",
     "end_time": "19:30",
-    "is_active": true
+    "is_active": false
   },
   {
     "id": "a1b2c3d4-0011-4000-a000-000000000011",
