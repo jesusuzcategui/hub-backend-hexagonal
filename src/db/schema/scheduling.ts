@@ -1,7 +1,8 @@
 import { boolean, index, pgSchema, smallint, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { accounts } from "./users";
-import { orders, products } from "./ecommerce";
+import { products } from "./ecommerce";
+import { orders } from "./payments";
 
 export const schedulingSchema = pgSchema("scheduling");
 

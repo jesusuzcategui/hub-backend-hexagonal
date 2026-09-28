@@ -1,69 +1,102 @@
 import { eq } from "drizzle-orm";
 import { FastifyInstance } from "fastify";
-import { products } from "../../db/schema";
+import { carts } from "../../db/schema";
 import { AppError } from "../../lib/errors";
+import type { CartItem, CreateCartInput, UpdateCartInput } from "./cart.schemas";
 
-const CART_TTL = 7 * 24 * 60 * 60;
-
-function cartKey(userId: string): string {
-  return `cart:${userId}`;
+export interface CartDto {
+  token: string;
+  items: CartItem[];
+  buyerEmail: string | null;
+  buyerName: string | null;
+  buyerWhatsapp: string | null;
+  currency: string | null;
+  locale: string | null;
+  status: "open" | "converted" | "abandoned";
+  createdAt: Date;
+  updatedAt: Date;
+  expiresAt: Date | null;
 }
 
-export interface CartItem {
-  productId: string;
-  name: string;
-  priceCop: number;
-  priceUsd: number;
-  quantity: number;
-  addedAt: string;
+type CartRow = typeof carts.$inferSelect;
+
+function toDto(row: CartRow): CartDto {
+  return {
+    token: row.id,
+    items: (row.items as CartItem[]) ?? [],
+    buyerEmail: row.buyerEmail,
+    buyerName: row.buyerName,
+    buyerWhatsapp: row.buyerWhatsapp,
+    currency: row.currency,
+    locale: row.locale,
+    status: row.status,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    expiresAt: row.expiresAt,
+  };
 }
 
-export async function getCart(fastify: FastifyInstance, userId: string): Promise<CartItem[]> {
-  const raw = await fastify.redis.hgetall(cartKey(userId));
-  if (!raw || Object.keys(raw).length === 0) return [];
-  return Object.values(raw).map((v) => JSON.parse(v) as CartItem);
-}
-
-export async function addCartItem(
+export async function createCart(
   fastify: FastifyInstance,
-  userId: string,
-  productId: string,
-  quantity: number,
-): Promise<CartItem[]> {
-  const product = await fastify.drizzle.query.products.findFirst({
-    where: eq(products.id, productId),
-    columns: { id: true, name: true, priceCop: true, priceUsd: true, isActive: true },
+  input: CreateCartInput,
+): Promise<CartDto> {
+  const [row] = await fastify.drizzle
+    .insert(carts)
+    .values({
+      items: input.items ?? [],
+      buyerEmail: input.buyerEmail ?? null,
+      buyerName: input.buyerName ?? null,
+      buyerWhatsapp: input.buyerWhatsapp ?? null,
+      currency: input.currency ?? null,
+      locale: input.locale ?? null,
+    })
+    .returning();
+
+  return toDto(row);
+}
+
+export async function getCartByToken(
+  fastify: FastifyInstance,
+  token: string,
+): Promise<CartDto> {
+  const row = await fastify.drizzle.query.carts.findFirst({
+    where: eq(carts.id, token),
   });
 
-  if (!product || !product.isActive) {
-    throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found");
+  if (!row) throw new AppError(404, "CART_NOT_FOUND", "Cart not found");
+
+  // A converted/abandoned cart is returned as-is (not 404'd) so a recovery-link
+  // opened from an old email can tell the buyer "this cart already checked out"
+  // instead of hitting a dead end; the frontend decides what to render off `status`.
+  return toDto(row);
+}
+
+export async function updateCartByToken(
+  fastify: FastifyInstance,
+  token: string,
+  input: UpdateCartInput,
+): Promise<CartDto> {
+  const db = fastify.drizzle;
+
+  const existing = await db.query.carts.findFirst({
+    where: eq(carts.id, token),
+    columns: { id: true, status: true },
+  });
+
+  if (!existing) throw new AppError(404, "CART_NOT_FOUND", "Cart not found");
+  if (existing.status !== "open") {
+    throw new AppError(409, "CART_NOT_OPEN", "Cannot edit a cart that is not open");
   }
 
-  const key = cartKey(userId);
-  const item: CartItem = {
-    productId: product.id,
-    name: product.name,
-    priceCop: product.priceCop,
-    priceUsd: product.priceUsd,
-    quantity,
-    addedAt: new Date().toISOString(),
-  };
+  const updates: Partial<typeof carts.$inferInsert> = { updatedAt: new Date() };
+  if (input.items !== undefined) updates.items = input.items;
+  if (input.buyerEmail !== undefined) updates.buyerEmail = input.buyerEmail;
+  if (input.buyerName !== undefined) updates.buyerName = input.buyerName;
+  if (input.buyerWhatsapp !== undefined) updates.buyerWhatsapp = input.buyerWhatsapp;
+  if (input.currency !== undefined) updates.currency = input.currency;
+  if (input.locale !== undefined) updates.locale = input.locale;
 
-  await fastify.redis.hset(key, productId, JSON.stringify(item));
-  await fastify.redis.expire(key, CART_TTL);
+  const [row] = await db.update(carts).set(updates).where(eq(carts.id, token)).returning();
 
-  return getCart(fastify, userId);
-}
-
-export async function removeCartItem(
-  fastify: FastifyInstance,
-  userId: string,
-  productId: string,
-): Promise<CartItem[]> {
-  await fastify.redis.hdel(cartKey(userId), productId);
-  return getCart(fastify, userId);
-}
-
-export async function clearCart(fastify: FastifyInstance, userId: string): Promise<void> {
-  await fastify.redis.del(cartKey(userId));
+  return toDto(row);
 }

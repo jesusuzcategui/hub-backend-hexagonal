@@ -14,6 +14,7 @@ import {
 import { AppError } from "../../lib/errors";
 import "../../plugins/caldav.js";
 import { createStudentBooking, getAvailableSlots } from "../schedule/schedule.service.js";
+import { listOrdersForAdmin, validateManualTransfer } from "../payments/payments.service.js";
 
 const ARGON2_OPTIONS: argon2.Options = {
   type: argon2.argon2id,
@@ -487,6 +488,7 @@ export async function grantCreditsToStudent(
     grantedBy,
     expiresAt,
     notes,
+    orderId,
   }: {
     productId: string;
     totalCredits: number;
@@ -494,6 +496,8 @@ export async function grantCreditsToStudent(
     grantedBy: string;
     expiresAt?: string;
     notes?: string;
+    /** Links the credit block back to the payments order that funded it (settlement callers). Manual admin grants (no order behind them) omit this and get NULL, same as before. */
+    orderId?: string | null;
   },
 ) {
   const db = fastify.drizzle;
@@ -517,7 +521,7 @@ export async function grantCreditsToStudent(
     .values({
       userId,
       productId,
-      orderId: null,
+      orderId: orderId ?? null,
       grantedBy,
       paymentMethod,
       grantNotes: notes ?? null,
@@ -675,6 +679,21 @@ export async function deleteStudent(fastify: FastifyInstance, userId: string) {
     // Revoke all refresh tokens
     await tx.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
   });
+}
+
+export async function listOrders(
+  fastify: FastifyInstance,
+  filters: { status?: string; fulfillmentStatus?: string },
+) {
+  return listOrdersForAdmin(fastify, filters);
+}
+
+export async function validateTransfer(
+  fastify: FastifyInstance,
+  orderId: string,
+  decision: "approve" | "reject",
+) {
+  return validateManualTransfer(fastify, orderId, decision);
 }
 
 export { getAvailableSlots };

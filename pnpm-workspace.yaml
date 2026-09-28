@@ -1,3 +1,5 @@
 allowBuilds:
   argon2: true
   esbuild: true
+  hexagonal-payments-core: true
+  hexagonal-payments-core@git+https://github.com/jesusuzcategui/hexagonal-payments-core.git#ccf88c7b129d78a9af4c4bb00fbce8f5f42a2bd5: true

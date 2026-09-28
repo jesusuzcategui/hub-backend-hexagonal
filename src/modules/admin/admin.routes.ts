@@ -23,6 +23,8 @@ import {
   listStudentActiveCredits,
   adminBookForStudent,
   getAvailableSlots,
+  listOrders,
+  validateTransfer,
 } from "./admin.service";
 
 async function requireAdmin(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
@@ -207,4 +209,24 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get("/admin/slots", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
     reply.send({ data: await getAvailableSlots(fastify) });
   });
+
+  // Orders (payments module)
+  fastify.get("/admin/orders", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { status, fulfillmentStatus } = req.query as { status?: string; fulfillmentStatus?: string };
+    reply.send({ data: await listOrders(fastify, { status, fulfillmentStatus }) });
+  });
+
+  fastify.post(
+    "/admin/orders/:id/validate-transfer",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { decision } = (req.body ?? {}) as { decision?: "approve" | "reject" };
+      if (decision !== "approve" && decision !== "reject") {
+        throw new AppError(400, "INVALID_DECISION", "decision must be approve or reject");
+      }
+      const result = await validateTransfer(fastify, id, decision);
+      reply.send({ data: { outcome: result.outcome } });
+    },
+  );
 }
