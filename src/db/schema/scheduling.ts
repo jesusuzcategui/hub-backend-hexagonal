@@ -141,6 +141,29 @@ export const classNotes = schedulingSchema.table(
   (table) => [uniqueIndex("uq_class_notes_booking_id").on(table.bookingId)],
 );
 
+// A time range the teacher is unavailable (vacation, one-off block, etc).
+// Independent of weeklySlots.isActive: deactivating a weekly slot removes it
+// from the recurring pattern entirely, while a blocked_slot just closes a
+// specific window without touching the pattern — the slot reopens on its own
+// once the block's range is in the past.
+export const blockedSlots = schedulingSchema.table(
+  "blocked_slots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    teacherId: uuid("teacher_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_blocked_slots_teacher_id").on(table.teacherId),
+    index("idx_blocked_slots_starts_at").on(table.startsAt),
+  ],
+);
+
 export const mentoringRequests = schedulingSchema.table(
   "mentoring_requests",
   {

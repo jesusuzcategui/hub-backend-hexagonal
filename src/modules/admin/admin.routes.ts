@@ -30,6 +30,10 @@ import {
   createCoupon,
   deactivateCoupon,
   reactivateCoupon,
+  rescheduleBooking,
+  listBlockedSlots,
+  createBlockedSlot,
+  deleteBlockedSlot,
 } from "./admin.service";
 
 async function requireAdmin(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
@@ -129,6 +133,40 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       reply.send({ data: await markAttendance(fastify, id, attended) });
     },
   );
+
+  fastify.patch(
+    "/admin/bookings/:id/reschedule",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { newSlotId } = (req.body ?? {}) as { newSlotId?: string };
+      if (!newSlotId) throw new AppError(400, "MISSING_FIELDS", "newSlotId is required");
+      reply.send({ data: await rescheduleBooking(fastify, id, newSlotId) });
+    },
+  );
+
+  // Blocked slots (teacher unavailability — vacation, one-off blocks)
+  fastify.get("/admin/blocked-slots", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
+    reply.send({ data: await listBlockedSlots(fastify) });
+  });
+
+  fastify.post("/admin/blocked-slots", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const body = (req.body ?? {}) as { startsAt?: string; endsAt?: string; reason?: string };
+    if (!body.startsAt || !body.endsAt) throw new AppError(400, "MISSING_FIELDS", "startsAt and endsAt are required");
+    const data = await createBlockedSlot(fastify, {
+      teacherId: req.user.sub as string,
+      startsAt: body.startsAt,
+      endsAt: body.endsAt,
+      reason: body.reason,
+    });
+    reply.status(201).send({ data });
+  });
+
+  fastify.delete("/admin/blocked-slots/:id", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await deleteBlockedSlot(fastify, id);
+    reply.send({ data: { deleted: true } });
+  });
 
   // Availabilities
   fastify.get("/admin/availabilities", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {

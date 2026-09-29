@@ -7,6 +7,7 @@ import {
   bookings,
   availabilities,
   weeklySlots,
+  blockedSlots,
   classCredits,
   products,
   refreshTokens,
@@ -14,7 +15,7 @@ import {
 } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import "../../plugins/caldav.js";
-import { createStudentBooking, getAvailableSlots } from "../schedule/schedule.service.js";
+import { adminRescheduleBooking, createStudentBooking, getAvailableSlots } from "../schedule/schedule.service.js";
 import { listOrdersForAdmin, validateManualTransfer } from "../payments/payments.service.js";
 
 const ARGON2_OPTIONS: argon2.Options = {
@@ -805,3 +806,46 @@ export async function reactivateCoupon(fastify: FastifyInstance, id: string) {
 }
 
 export { getAvailableSlots };
+
+// --- Reschedule --------------------------------------------------------------------
+
+export async function rescheduleBooking(fastify: FastifyInstance, bookingId: string, newSlotId: string) {
+  try {
+    return await adminRescheduleBooking(fastify, { bookingId, newSlotId });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Reschedule failed";
+    const status = msg.includes("not found") ? 404 : msg.includes("already booked") || msg.includes("blocked") ? 409 : 400;
+    throw new AppError(status, "RESCHEDULE_FAILED", msg);
+  }
+}
+
+// --- Blocked slots -------------------------------------------------------------------
+
+export async function listBlockedSlots(fastify: FastifyInstance) {
+  return fastify.drizzle.query.blockedSlots.findMany({ orderBy: asc(blockedSlots.startsAt) });
+}
+
+export async function createBlockedSlot(
+  fastify: FastifyInstance,
+  input: { teacherId: string; startsAt: string; endsAt: string; reason?: string },
+) {
+  const startsAt = new Date(input.startsAt);
+  const endsAt = new Date(input.endsAt);
+  if (isNaN(startsAt.getTime()) || isNaN(endsAt.getTime())) {
+    throw new AppError(400, "INVALID_DATE", "Invalid date format");
+  }
+  if (endsAt <= startsAt) throw new AppError(400, "INVALID_RANGE", "endsAt must be after startsAt");
+
+  const [block] = await fastify.drizzle
+    .insert(blockedSlots)
+    .values({ teacherId: input.teacherId, startsAt, endsAt, reason: input.reason ?? null })
+    .returning();
+  return block;
+}
+
+export async function deleteBlockedSlot(fastify: FastifyInstance, id: string) {
+  const db = fastify.drizzle;
+  const block = await db.query.blockedSlots.findFirst({ where: eq(blockedSlots.id, id), columns: { id: true } });
+  if (!block) throw new AppError(404, "BLOCK_NOT_FOUND", "Blocked slot not found");
+  await db.delete(blockedSlots).where(eq(blockedSlots.id, id));
+}

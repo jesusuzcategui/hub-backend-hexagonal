@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { env } from "../../config/env.js";
 import { accounts } from "../../db/schema/users.js";
 import { products } from "../../db/schema/ecommerce.js";
-import { availabilities, bookings, classCredits, weeklySlots } from "../../db/schema/scheduling.js";
+import { availabilities, blockedSlots, bookings, classCredits, weeklySlots } from "../../db/schema/scheduling.js";
 import "../../plugins/caldav.js";
 
 function icalDate(d: Date): string {
@@ -172,13 +172,21 @@ export async function getAvailableSlots(fastify: FastifyInstance) {
     }),
   );
 
+  const blocks = await fastify.drizzle
+    .select({ startsAt: blockedSlots.startsAt, endsAt: blockedSlots.endsAt })
+    .from(blockedSlots)
+    .where(gt(blockedSlots.endsAt, new Date()));
+
+  const overlapsBlock = (startsAt: Date, endsAt: Date) =>
+    blocks.some((b) => startsAt < b.endsAt && endsAt > b.startsAt);
+
   const available: Array<{ id: string; startsAt: string; endsAt: string }> = [];
 
   for (const slot of slots) {
     const occurrences = upcomingOccurrences(slot.dayOfWeek, slot.startTime, slot.endTime, 6);
     for (const occ of occurrences) {
       const key = `${slot.id}_${occ.slotDate}_${occ.chunkHHMM}`;
-      if (!takenKeys.has(key)) {
+      if (!takenKeys.has(key) && !overlapsBlock(occ.startsAt, occ.endsAt)) {
         available.push({
           id: key,
           startsAt: occ.startsAt.toISOString(),
@@ -228,9 +236,13 @@ export async function createStudentBooking(
     slotId: string; // composite: weeklySlotId_YYYYMMDD_HHMM OR legacy availabilityId (uuid)
     creditId: string;
     notes?: string;
+    // false when this booking is the "new" half of a reschedule — the credit
+    // was already consumed by the booking being replaced, so it must not be
+    // charged again.
+    consumeCredit?: boolean;
   },
 ) {
-  const { studentId, slotId, creditId, notes } = params;
+  const { studentId, slotId, creditId, notes, consumeCredit = true } = params;
 
   const student = await fastify.drizzle
     .select({ id: accounts.id, email: accounts.email, displayName: accounts.displayName })
@@ -313,6 +325,13 @@ export async function createStudentBooking(
   let meetLink: string | null = null;
 
   await fastify.drizzle.transaction(async (tx) => {
+    const [block] = await tx
+      .select({ id: blockedSlots.id })
+      .from(blockedSlots)
+      .where(and(sql`${blockedSlots.startsAt} < ${endsAt}`, sql`${blockedSlots.endsAt} > ${startsAt}`))
+      .limit(1);
+    if (block) throw new Error("Slot is blocked");
+
     if (weeklySlotId) {
       // Check for race condition: someone else booking same weekly slot + date
       const [existing] = await tx
@@ -348,13 +367,18 @@ export async function createStudentBooking(
       .for("update");
 
     if (!credit) throw new Error("Credit not found");
-    if (credit.usedCredits >= credit.totalCredits) throw new Error("No credits remaining");
+    // consumeCredit=false: this credit was already consumed by the booking
+    // being replaced (reschedule) — don't re-check remaining balance or
+    // increment again, that would double-charge a single credit.
+    if (consumeCredit && credit.usedCredits >= credit.totalCredits) throw new Error("No credits remaining");
     verifiedProductId = credit.productId;
 
-    await tx
-      .update(classCredits)
-      .set({ usedCredits: sql`${classCredits.usedCredits} + 1` })
-      .where(eq(classCredits.id, creditId));
+    if (consumeCredit) {
+      await tx
+        .update(classCredits)
+        .set({ usedCredits: sql`${classCredits.usedCredits} + 1` })
+        .where(eq(classCredits.id, creditId));
+    }
 
     const [inserted] = await tx
       .insert(bookings)
@@ -521,4 +545,97 @@ export async function cancelStudentBooking(
       fastify.log.error({ err }, "Failed to delete CalDAV event");
     }
   }
+}
+
+interface RescheduleSource {
+  id: string;
+  studentId: string;
+  creditId: string;
+  availabilityId: string | null;
+  gcalEventId: string | null;
+  status: string;
+  startsAt: Date;
+}
+
+// Moves a booking to a new slot reusing the SAME already-consumed credit —
+// no refund on the old booking, no new charge on the new one. Creates the
+// new booking FIRST: if the new slot is unavailable/invalid, the old
+// booking is left completely untouched (safe default). Only once the new
+// booking exists do we close out the old one.
+async function rescheduleBookingInternal(fastify: FastifyInstance, booking: RescheduleSource, newSlotId: string) {
+  const result = await createStudentBooking(fastify, {
+    studentId: booking.studentId,
+    slotId: newSlotId,
+    creditId: booking.creditId,
+    consumeCredit: false,
+  });
+
+  await fastify.drizzle
+    .update(bookings)
+    .set({ status: "cancelled", cancelledAt: new Date(), cancelReason: "Rescheduled" })
+    .where(eq(bookings.id, booking.id));
+
+  if (booking.availabilityId) {
+    await fastify.drizzle
+      .update(availabilities)
+      .set({ isBooked: false })
+      .where(eq(availabilities.id, booking.availabilityId));
+  }
+
+  if (booking.gcalEventId) {
+    try {
+      await fastify.caldav.deleteEvent(booking.gcalEventId);
+    } catch (err) {
+      fastify.log.error({ err }, "Failed to delete CalDAV event for rescheduled booking");
+    }
+  }
+
+  return result;
+}
+
+// Student-initiated: same 24h cutoff as cancelStudentBooking.
+export async function rescheduleStudentBooking(
+  fastify: FastifyInstance,
+  params: { bookingId: string; studentId: string; newSlotId: string },
+) {
+  const { bookingId, studentId, newSlotId } = params;
+
+  const [booking] = await fastify.drizzle
+    .select()
+    .from(bookings)
+    .where(and(eq(bookings.id, bookingId), eq(bookings.studentId, studentId)))
+    .limit(1);
+
+  if (!booking) throw new Error("Booking not found");
+  if (booking.status === "cancelled" || booking.status === "completed") {
+    throw new Error("Booking cannot be rescheduled");
+  }
+
+  const cutoff = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  if (booking.startsAt <= cutoff) {
+    throw new Error("Cannot reschedule within 24 hours of class");
+  }
+
+  return rescheduleBookingInternal(fastify, booking, newSlotId);
+}
+
+// Admin-initiated: no cutoff — admin can move any booking at any time.
+export async function adminRescheduleBooking(
+  fastify: FastifyInstance,
+  params: { bookingId: string; newSlotId: string },
+) {
+  const { bookingId, newSlotId } = params;
+
+  const [booking] = await fastify.drizzle
+    .select()
+    .from(bookings)
+    .where(eq(bookings.id, bookingId))
+    .limit(1);
+
+  if (!booking) throw new Error("Booking not found");
+  if (booking.status === "cancelled" || booking.status === "completed") {
+    throw new Error("Booking cannot be rescheduled");
+  }
+
+  return rescheduleBookingInternal(fastify, booking, newSlotId);
 }

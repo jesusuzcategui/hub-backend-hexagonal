@@ -39,6 +39,7 @@ declare module "fastify" {
 const ALLOWED_ORIGINS = [
   "http://localhost:4321",
   "http://localhost:8080",
+  "http://localhost:3402", // jesusuzcategui-campus (Nuxt) dev server
   ...(env.app.publicUrl ? [env.app.publicUrl] : []),
   ...(env.mentoring.portfolioOrigin ? [env.mentoring.portfolioOrigin] : []),
 ];
