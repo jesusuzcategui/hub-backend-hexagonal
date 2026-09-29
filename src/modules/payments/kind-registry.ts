@@ -11,12 +11,24 @@ import { OrderKindRegistry } from "hexagonal-payments-core";
 // locale field of its own (see payments.service.ts's checkout()).
 export const classCreditPlanMetadataSchema = z.object({
   cartId: z.string().uuid(),
-  productId: z.string().uuid(),
-  creditsCount: z.number().int().min(1),
+  // null for a custom (product-less) order — an ad-hoc charge with no plan
+  // behind it, see admin.service.ts's createCheckoutLink / priceCartItems.
+  productId: z.string().uuid().nullable().default(null),
+  // 0 for a custom order — nothing to grant, applySettlementSideEffects
+  // already skips crediting entirely when productId is null.
+  creditsCount: z.number().int().min(0),
   locale: z.enum(["en", "es"]).default("es"),
   couponId: z.string().uuid().nullable().default(null),
   couponCode: z.string().nullable().default(null),
-  items: z.array(z.object({ planId: z.string(), qty: z.number().int().min(1) })),
+  items: z.array(z.object({
+    planId: z.string(),
+    qty: z.number().int().min(1),
+    // Carried through so the order/thank-you page and admin order detail
+    // can show what a custom charge was actually for (see payments.service.ts's
+    // productName fallback to metadata.items[0].customLabel).
+    customAmountMinor: z.number().int().positive().optional(),
+    customLabel: z.string().optional(),
+  })),
 });
 
 export type ClassCreditPlanMetadata = z.infer<typeof classCreditPlanMetadataSchema>;
