@@ -16,7 +16,9 @@ import {
 import { AppError } from "../../lib/errors";
 import "../../plugins/caldav.js";
 import { adminRescheduleBooking, createStudentBooking, getAvailableSlots } from "../schedule/schedule.service.js";
-import { getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer } from "../payments/payments.service.js";
+import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer } from "../payments/payments.service.js";
+import { createCart } from "../cart/cart.service.js";
+import { toDecimalMajor } from "../../adapters/payments/money.js";
 
 const ARGON2_OPTIONS: argon2.Options = {
   type: argon2.argon2id,
@@ -856,4 +858,80 @@ export async function deleteBlockedSlot(fastify: FastifyInstance, id: string) {
   const block = await db.query.blockedSlots.findFirst({ where: eq(blockedSlots.id, id), columns: { id: true } });
   if (!block) throw new AppError(404, "BLOCK_NOT_FOUND", "Blocked slot not found");
   await db.delete(blockedSlots).where(eq(blockedSlots.id, id));
+}
+
+// --- Admin-generated checkout links ---------------------------------------------------
+//
+// Lets an admin create a cart on a buyer's behalf (no account required — same anonymous
+// cart the storefront uses) and email them the checkout link, instead of the buyer having
+// to start from the shop page themselves. Reuses cart.service.ts's createCart as-is; the
+// buyer picks their own payment method (epayco/paypal/manual transfer) on that page,
+// nothing here decides that for them.
+
+export async function createCheckoutLink(
+  fastify: FastifyInstance,
+  input: {
+    buyerEmail: string;
+    buyerName?: string;
+    productId: string;
+    qty?: number;
+    currency: string;
+    locale?: "en" | "es";
+  },
+) {
+  const currency = input.currency.toUpperCase();
+  const product = await fastify.drizzle.query.products.findFirst({
+    where: eq(products.id, input.productId),
+    columns: { id: true, name: true, priceCop: true, priceUsd: true, isActive: true },
+  });
+  if (!product || !product.isActive) {
+    throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found or inactive");
+  }
+
+  const locale = input.locale ?? "es";
+  const qty = input.qty ?? 1;
+
+  const cart = await createCart(fastify, {
+    items: [{ planId: input.productId, qty }],
+    buyerEmail: input.buyerEmail,
+    buyerName: input.buyerName,
+    currency,
+    locale,
+  });
+
+  const base = (env.app.publicUrl ?? "").replace(/\/+$/, "");
+  const checkoutUrl = locale === "en" ? `${base}/en/cart/${cart.token}` : `${base}/cart/${cart.token}`;
+
+  const priceMinor = (currency === "USD" ? product.priceUsd : product.priceCop) * qty;
+  const priceLabel = `${toDecimalMajor(priceMinor, currency)} ${currency}`;
+
+  const safeName = escapeHtml(input.buyerName ?? input.buyerEmail);
+  const safeProduct = escapeHtml(product.name);
+  const safeUrl = escapeHtml(checkoutUrl);
+
+  const subject = locale === "en" ? `Complete your purchase — ${product.name}` : `Completá tu compra — ${product.name}`;
+  const html = locale === "en"
+    ? `
+      <p>Hi ${safeName},</p>
+      <p>You have a pending purchase: <strong>${safeProduct}</strong> (${priceLabel}).</p>
+      <p>Click below to choose your payment method and complete it:</p>
+      <p><a href="${safeUrl}">${safeUrl}</a></p>
+      <p>— ${env.smtp.fromName}</p>
+    `
+    : `
+      <p>Hola ${safeName},</p>
+      <p>Tenés una compra pendiente: <strong>${safeProduct}</strong> (${priceLabel}).</p>
+      <p>Hacé clic abajo para elegir tu método de pago y completarla:</p>
+      <p><a href="${safeUrl}">${safeUrl}</a></p>
+      <p>— ${env.smtp.fromName}</p>
+    `;
+
+  await fastify.mailer.sendMail({
+    from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
+    to: input.buyerEmail,
+    subject,
+    html,
+  });
+
+  return { cartToken: cart.token, checkoutUrl };
 }

@@ -32,6 +32,7 @@ import {
   createCoupon,
   deactivateCoupon,
   reactivateCoupon,
+  createCheckoutLink,
   rescheduleBooking,
   listBlockedSlots,
   createBlockedSlot,
@@ -351,4 +352,29 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       reply.send({ data: await reactivateCoupon(fastify, id) });
     },
   );
+
+  // Admin-generated checkout links: creates a cart on the buyer's behalf and
+  // emails them the link — same public /cart/:token page the storefront uses.
+  fastify.post("/admin/checkout-links", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      buyerEmail?: string;
+      buyerName?: string;
+      productId?: string;
+      qty?: number;
+      currency?: string;
+      locale?: "en" | "es";
+    };
+    if (!body.buyerEmail || !body.productId || !body.currency) {
+      throw new AppError(400, "MISSING_FIELDS", "buyerEmail, productId, and currency are required");
+    }
+    const data = await createCheckoutLink(fastify, {
+      buyerEmail: body.buyerEmail,
+      buyerName: body.buyerName,
+      productId: body.productId,
+      qty: body.qty,
+      currency: body.currency,
+      locale: body.locale,
+    });
+    reply.status(201).send({ data });
+  });
 }

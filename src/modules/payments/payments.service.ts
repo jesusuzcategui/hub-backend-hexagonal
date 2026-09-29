@@ -31,7 +31,7 @@ export type PaymentMethod = "epayco" | "paypal" | "manual_transfer";
 
 const clock = new SystemClock();
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
