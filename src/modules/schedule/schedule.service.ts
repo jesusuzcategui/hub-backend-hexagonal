@@ -553,7 +553,7 @@ interface RescheduleSource {
   creditId: string;
   availabilityId: string | null;
   gcalEventId: string | null;
-  status: string;
+  status: "pending" | "confirmed" | "cancelled" | "completed" | "no_show";
   startsAt: Date;
 }
 
@@ -570,10 +570,26 @@ async function rescheduleBookingInternal(fastify: FastifyInstance, booking: Resc
     consumeCredit: false,
   });
 
-  await fastify.drizzle
+  // Conditional on the status we actually read earlier — if two reschedules
+  // of the same booking race, only the first cancel here succeeds (0 rows
+  // affected for the loser). Without this, both could create a new booking
+  // off the same already-consumed credit before either cancels the source,
+  // leaving two active bookings paid for by one credit.
+  const cancelled = await fastify.drizzle
     .update(bookings)
     .set({ status: "cancelled", cancelledAt: new Date(), cancelReason: "Rescheduled" })
-    .where(eq(bookings.id, booking.id));
+    .where(and(eq(bookings.id, booking.id), eq(bookings.status, booking.status)))
+    .returning({ id: bookings.id });
+
+  if (cancelled.length === 0) {
+    // Lost the race — undo the new booking we just created so it doesn't
+    // sit alongside whatever concurrent change won, both drawing on one credit.
+    await fastify.drizzle
+      .update(bookings)
+      .set({ status: "cancelled", cancelledAt: new Date(), cancelReason: "Reschedule race — source booking already changed" })
+      .where(eq(bookings.id, result.bookingId));
+    throw new Error("Booking was already modified — reschedule aborted");
+  }
 
   if (booking.availabilityId) {
     await fastify.drizzle
