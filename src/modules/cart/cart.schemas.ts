@@ -5,17 +5,17 @@ import { z } from "zod";
 // later via hexagonal-payments-core; keep it loose but shaped.
 const currencySchema = z.string().length(3).toUpperCase();
 
-// A "custom" item has no real product behind it — an ad-hoc charge (e.g. an
-// outstanding balance, a one-off fee) an admin wants to collect via the same
-// checkout-link flow. customAmountMinor/customLabel carry the price and the
-// text a buyer sees for it instead of a product lookup; planId is still
-// required as the schema's discriminant-free key (checkout.ts treats a
-// non-empty customAmountMinor as "this item is custom" — see priceCartItems).
+// Public shape only — items on POST /cart and PATCH /cart/:token (both
+// no-auth) are priced strictly from the real product row (priceCartItems
+// looks planId up in the products table). customAmountMinor/customLabel
+// deliberately do NOT exist here: that pair lets an item skip the product
+// price lookup entirely, so if a caller could set it through this schema
+// they could name their own price on a public, unauthenticated endpoint.
+// The admin-only custom-charge path (createCheckoutLink) uses a separate,
+// non-public AdminCartItem type instead — see cart.service.ts.
 export const cartItemSchema = z.object({
   planId: z.string().min(1),
   qty: z.number().int().min(1),
-  customAmountMinor: z.number().int().positive().optional(),
-  customLabel: z.string().trim().min(1).max(200).optional(),
 });
 
 export const createCartSchema = z.object({

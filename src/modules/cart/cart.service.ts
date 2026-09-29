@@ -4,6 +4,17 @@ import { carts } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import type { CartItem, CreateCartInput, UpdateCartInput } from "./cart.schemas";
 
+// Admin-only — never accepted from a request body/zod schema (see the
+// warning on cartItemSchema in cart.schemas.ts). Only admin.service.ts's
+// createCheckoutLink constructs this, in trusted server code, never from
+// user input.
+export interface AdminCartItem {
+  planId: string;
+  qty: number;
+  customAmountMinor?: number;
+  customLabel?: string;
+}
+
 export interface CartDto {
   token: string;
   items: CartItem[];
@@ -38,7 +49,7 @@ function toDto(row: CartRow): CartDto {
 
 export async function createCart(
   fastify: FastifyInstance,
-  input: CreateCartInput,
+  input: Omit<CreateCartInput, "items"> & { items?: CreateCartInput["items"] | AdminCartItem[] },
 ): Promise<CartDto> {
   const [row] = await fastify.drizzle
     .insert(carts)
