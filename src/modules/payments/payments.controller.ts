@@ -60,7 +60,7 @@ export async function checkoutController(request: FastifyRequest, reply: Fastify
 
   if (paymentMethod === "manual_transfer" && proofFile) {
     await attachManualTransferProof(request.server, result.attemptId, proofFile);
-    reply.status(200).send({ data: { status: "awaiting_verification" } });
+    reply.status(200).send({ data: { status: "awaiting_verification", orderId: result.orderId } });
     return;
   }
 
