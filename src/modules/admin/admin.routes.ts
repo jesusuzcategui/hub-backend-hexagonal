@@ -361,20 +361,39 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       buyerName?: string;
       productId?: string;
       qty?: number;
+      customAmountMinor?: number;
+      customLabel?: string;
       currency?: string;
       locale?: "en" | "es";
     };
-    if (!body.buyerEmail || !body.productId || !body.currency) {
-      throw new AppError(400, "MISSING_FIELDS", "buyerEmail, productId, and currency are required");
+    if (!body.buyerEmail || !body.currency) {
+      throw new AppError(400, "MISSING_FIELDS", "buyerEmail and currency are required");
     }
-    const data = await createCheckoutLink(fastify, {
-      buyerEmail: body.buyerEmail,
-      buyerName: body.buyerName,
-      productId: body.productId,
-      qty: body.qty,
-      currency: body.currency,
-      locale: body.locale,
-    });
+
+    const data = body.customAmountMinor !== undefined
+      ? await (async () => {
+          if (!body.customLabel) throw new AppError(400, "MISSING_FIELDS", "customLabel is required for a custom charge");
+          return createCheckoutLink(fastify, {
+            buyerEmail: body.buyerEmail!,
+            buyerName: body.buyerName,
+            currency: body.currency!,
+            locale: body.locale,
+            customAmountMinor: body.customAmountMinor!,
+            customLabel: body.customLabel,
+          });
+        })()
+      : await (async () => {
+          if (!body.productId) throw new AppError(400, "MISSING_FIELDS", "productId is required for a plan order");
+          return createCheckoutLink(fastify, {
+            buyerEmail: body.buyerEmail!,
+            buyerName: body.buyerName,
+            currency: body.currency!,
+            locale: body.locale,
+            productId: body.productId,
+            qty: body.qty,
+          });
+        })();
+
     reply.status(201).send({ data });
   });
 }

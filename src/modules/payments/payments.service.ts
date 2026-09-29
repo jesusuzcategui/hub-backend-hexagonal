@@ -150,22 +150,31 @@ async function validateAndPriceCoupon(
 // — NOT an assumption). Total credits granted = sum(credits * qty) across cart items.
 async function priceCartItems(
   fastify: FastifyInstance,
-  items: Array<{ planId: string; qty: number }>,
+  items: Array<{ planId: string; qty: number; customAmountMinor?: number; customLabel?: string }>,
   currency: string,
-): Promise<{ amountMinor: number; creditsCount: number; primaryProductId: string }> {
+): Promise<{ amountMinor: number; creditsCount: number; primaryProductId: string | null }> {
   if (items.length === 0) throw new AppError(400, "EMPTY_CART", "Cart has no items");
 
-  const ids = items.map((i) => i.planId);
-  const rows = await fastify.drizzle
-    .select({ id: products.id, priceCop: products.priceCop, priceUsd: products.priceUsd, metadata: products.metadata, isActive: products.isActive })
-    .from(products)
-    .where(inArray(products.id, ids));
+  const realIds = items.filter((i) => !i.customAmountMinor).map((i) => i.planId);
+  const rows = realIds.length
+    ? await fastify.drizzle
+        .select({ id: products.id, priceCop: products.priceCop, priceUsd: products.priceUsd, metadata: products.metadata, isActive: products.isActive })
+        .from(products)
+        .where(inArray(products.id, realIds))
+    : [];
 
   const byId = new Map(rows.map((r) => [r.id, r]));
 
   let amountMinor = 0;
   let creditsCount = 0;
+  let primaryProductId: string | null = null;
   for (const item of items) {
+    // Custom item: an ad-hoc charge, not a real product — no credits, no
+    // product lookup, just the amount the admin set when generating the link.
+    if (item.customAmountMinor) {
+      amountMinor += item.customAmountMinor * item.qty;
+      continue;
+    }
     const product = byId.get(item.planId);
     if (!product || !product.isActive) {
       throw new AppError(404, "PRODUCT_NOT_FOUND", `Product ${item.planId} not found or inactive`);
@@ -175,9 +184,10 @@ async function priceCartItems(
     const meta = product.metadata as Record<string, unknown> | null;
     const perUnitCredits = typeof meta?.credits === "number" ? meta.credits : 1;
     creditsCount += perUnitCredits * item.qty;
+    primaryProductId ??= item.planId;
   }
 
-  return { amountMinor, creditsCount, primaryProductId: items[0].planId };
+  return { amountMinor, creditsCount, primaryProductId };
 }
 
 // --- Checkout -----------------------------------------------------------------------
@@ -209,7 +219,7 @@ export async function checkout(fastify: FastifyInstance, input: CheckoutInput): 
   if (!cart.buyerEmail) throw new AppError(400, "MISSING_BUYER_EMAIL", "Cart has no buyer email");
 
   const currency = (cart.currency ?? "COP").toUpperCase();
-  const items = (cart.items as Array<{ planId: string; qty: number }>) ?? [];
+  const items = (cart.items as Array<{ planId: string; qty: number; customAmountMinor?: number; customLabel?: string }>) ?? [];
 
   const { amountMinor: subtotalMinor, creditsCount, primaryProductId } = await priceCartItems(
     fastify,
@@ -331,6 +341,7 @@ export async function getPublicOrderStatus(
     productId?: string;
     creditsCount?: number;
     locale?: "en" | "es";
+    items?: Array<{ customLabel?: string }>;
   } | null;
 
   let productName: string | null = null;
@@ -340,6 +351,10 @@ export async function getPublicOrderStatus(
       columns: { name: true },
     });
     productName = product?.name ?? null;
+  } else {
+    // Custom (product-less) order — the buyer-facing label the admin typed
+    // when generating this checkout link.
+    productName = metadata?.items?.[0]?.customLabel ?? null;
   }
 
   const { paymentAttemptRepository } = buildRepos(fastify);
@@ -712,6 +727,7 @@ export async function getOrderDetailForAdmin(fastify: FastifyInstance, orderId: 
     locale?: string;
     couponId?: string | null;
     couponCode?: string | null;
+    items?: Array<{ customLabel?: string }>;
   } | null;
 
   let productName: string | null = null;
@@ -721,6 +737,8 @@ export async function getOrderDetailForAdmin(fastify: FastifyInstance, orderId: 
       columns: { name: true },
     });
     productName = product?.name ?? null;
+  } else {
+    productName = metadata?.items?.[0]?.customLabel ?? null;
   }
 
   const latestManualTransferAttempt = attempts.find((a) => a.provider === "manual_transfer");

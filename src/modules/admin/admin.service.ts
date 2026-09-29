@@ -873,26 +873,43 @@ export async function createCheckoutLink(
   input: {
     buyerEmail: string;
     buyerName?: string;
-    productId: string;
-    qty?: number;
     currency: string;
     locale?: "en" | "es";
-  },
+  } & (
+    | { productId: string; qty?: number; customAmountMinor?: undefined; customLabel?: undefined }
+    // No real product — an ad-hoc charge (outstanding balance, a one-off
+    // fee) collected through the same checkout-link/cart flow. See
+    // priceCartItems in payments.service.ts for how this is priced.
+    | { productId?: undefined; qty?: undefined; customAmountMinor: number; customLabel: string }
+  ),
 ) {
   const currency = input.currency.toUpperCase();
-  const product = await fastify.drizzle.query.products.findFirst({
-    where: eq(products.id, input.productId),
-    columns: { id: true, name: true, priceCop: true, priceUsd: true, isActive: true },
-  });
-  if (!product || !product.isActive) {
-    throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found or inactive");
+  const locale = input.locale ?? "es";
+
+  let cartItem: { planId: string; qty: number; customAmountMinor?: number; customLabel?: string };
+  let displayName: string;
+  let priceMinor: number;
+
+  if (input.customAmountMinor !== undefined) {
+    cartItem = { planId: "custom", qty: 1, customAmountMinor: input.customAmountMinor, customLabel: input.customLabel };
+    displayName = input.customLabel;
+    priceMinor = input.customAmountMinor;
+  } else {
+    const product = await fastify.drizzle.query.products.findFirst({
+      where: eq(products.id, input.productId),
+      columns: { id: true, name: true, priceCop: true, priceUsd: true, isActive: true },
+    });
+    if (!product || !product.isActive) {
+      throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found or inactive");
+    }
+    const qty = input.qty ?? 1;
+    cartItem = { planId: input.productId, qty };
+    displayName = product.name;
+    priceMinor = (currency === "USD" ? product.priceUsd : product.priceCop) * qty;
   }
 
-  const locale = input.locale ?? "es";
-  const qty = input.qty ?? 1;
-
   const cart = await createCart(fastify, {
-    items: [{ planId: input.productId, qty }],
+    items: [cartItem],
     buyerEmail: input.buyerEmail,
     buyerName: input.buyerName,
     currency,
@@ -902,14 +919,13 @@ export async function createCheckoutLink(
   const base = (env.app.publicUrl ?? "").replace(/\/+$/, "");
   const checkoutUrl = locale === "en" ? `${base}/en/cart/${cart.token}` : `${base}/cart/${cart.token}`;
 
-  const priceMinor = (currency === "USD" ? product.priceUsd : product.priceCop) * qty;
   const priceLabel = `${toDecimalMajor(priceMinor, currency)} ${currency}`;
 
   const safeName = escapeHtml(input.buyerName ?? input.buyerEmail);
-  const safeProduct = escapeHtml(product.name);
+  const safeProduct = escapeHtml(displayName);
   const safeUrl = escapeHtml(checkoutUrl);
 
-  const subject = locale === "en" ? `Complete your purchase — ${product.name}` : `Completá tu compra — ${product.name}`;
+  const subject = locale === "en" ? `Complete your purchase — ${displayName}` : `Completá tu compra — ${displayName}`;
   const html = locale === "en"
     ? `
       <p>Hi ${safeName},</p>
