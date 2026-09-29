@@ -16,7 +16,7 @@ import {
 import { AppError } from "../../lib/errors";
 import "../../plugins/caldav.js";
 import { adminRescheduleBooking, createStudentBooking, getAvailableSlots } from "../schedule/schedule.service.js";
-import { listOrdersForAdmin, validateManualTransfer } from "../payments/payments.service.js";
+import { getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer } from "../payments/payments.service.js";
 
 const ARGON2_OPTIONS: argon2.Options = {
   type: argon2.argon2id,
@@ -730,6 +730,14 @@ export async function validateTransfer(
   decision: "approve" | "reject",
 ) {
   return validateManualTransfer(fastify, orderId, decision);
+}
+
+export async function getOrderDetail(fastify: FastifyInstance, orderId: string) {
+  return getOrderDetailForAdmin(fastify, orderId);
+}
+
+export async function getOrderProof(fastify: FastifyInstance, orderId: string) {
+  return getManualTransferProof(fastify, orderId);
 }
 
 // --- Coupons ------------------------------------------------------------------------

@@ -682,6 +682,100 @@ export async function listOrdersForAdmin(
     .limit(200);
 }
 
+export async function getOrderDetailForAdmin(fastify: FastifyInstance, orderId: string) {
+  const { orders: ordersTable, paymentAttempts: attemptsTable } = await import("../../db/schema");
+
+  const order = await fastify.drizzle.query.orders.findFirst({ where: eq(ordersTable.id, orderId) });
+  if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+
+  const [buyer] = await fastify.drizzle
+    .select({ id: accounts.id, email: accounts.email, displayName: accounts.displayName })
+    .from(accounts)
+    .where(eq(accounts.id, order.userId))
+    .limit(1);
+
+  const attempts = await fastify.drizzle
+    .select({
+      id: attemptsTable.id,
+      provider: attemptsTable.provider,
+      status: attemptsTable.status,
+      providerRef: attemptsTable.providerRef,
+      createdAt: attemptsTable.createdAt,
+    })
+    .from(attemptsTable)
+    .where(eq(attemptsTable.orderId, orderId))
+    .orderBy(desc(attemptsTable.createdAt));
+
+  const metadata = (order.metadata ?? null) as {
+    productId?: string;
+    creditsCount?: number;
+    locale?: string;
+    couponId?: string | null;
+    couponCode?: string | null;
+  } | null;
+
+  let productName: string | null = null;
+  if (metadata?.productId) {
+    const product = await fastify.drizzle.query.products.findFirst({
+      where: eq(products.id, metadata.productId),
+      columns: { name: true },
+    });
+    productName = product?.name ?? null;
+  }
+
+  const latestManualTransferAttempt = attempts.find((a) => a.provider === "manual_transfer");
+
+  return {
+    order,
+    buyer: buyer ?? null,
+    attempts,
+    productName,
+    creditsCount: metadata?.creditsCount ?? null,
+    couponCode: metadata?.couponCode ?? null,
+    hasManualTransferProof: Boolean(latestManualTransferAttempt?.providerRef),
+  };
+}
+
+const PROOF_CONTENT_TYPES: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  gif: "image/gif",
+  pdf: "application/pdf",
+};
+
+// The upload path (attachManualTransferProof) never captured the client's
+// claimed mimetype, so it can't be trusted anyway — content type here is
+// derived from the (already sanitized, alnum-only) file extension against a
+// fixed allowlist. Anything outside it is forced to download rather than
+// render inline, so this can never become a stored-XSS vector.
+export async function getManualTransferProof(fastify: FastifyInstance, orderId: string) {
+  const { paymentAttempts: attemptsTable } = await import("../../db/schema");
+
+  const [attempt] = await fastify.drizzle
+    .select({ providerRef: attemptsTable.providerRef, provider: attemptsTable.provider })
+    .from(attemptsTable)
+    .where(and(eq(attemptsTable.orderId, orderId), eq(attemptsTable.provider, "manual_transfer")))
+    .orderBy(desc(attemptsTable.createdAt))
+    .limit(1);
+
+  if (!attempt?.providerRef) throw new AppError(404, "PROOF_NOT_FOUND", "No manual-transfer proof for this order");
+
+  const remotePath = attempt.providerRef;
+  const filename = remotePath.split("/").pop() ?? "proof";
+  const extension = filename.split(".").pop()?.toLowerCase() ?? "";
+  const contentType = PROOF_CONTENT_TYPES[extension];
+
+  const buffer = (await fastify.webdav.getFileContents(remotePath)) as Buffer;
+  return {
+    buffer,
+    filename,
+    contentType: contentType ?? "application/octet-stream",
+    inline: Boolean(contentType),
+  };
+}
+
 export async function validateManualTransfer(
   fastify: FastifyInstance,
   orderId: string,

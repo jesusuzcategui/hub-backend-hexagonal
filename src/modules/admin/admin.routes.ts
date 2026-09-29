@@ -26,6 +26,8 @@ import {
   getAvailableSlots,
   listOrders,
   validateTransfer,
+  getOrderDetail,
+  getOrderProof,
   listCoupons,
   createCoupon,
   deactivateCoupon,
@@ -285,6 +287,21 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       reply.send({ data: { outcome: result.outcome } });
     },
   );
+
+  fastify.get("/admin/orders/:id", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    reply.send({ data: await getOrderDetail(fastify, id) });
+  });
+
+  fastify.get("/admin/orders/:id/proof", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { buffer, filename, contentType, inline } = await getOrderProof(fastify, id);
+    reply
+      .header("Content-Type", contentType)
+      .header("X-Content-Type-Options", "nosniff")
+      .header("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${filename}"`)
+      .send(buffer);
+  });
 
   // Coupons
   fastify.get("/admin/coupons", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
