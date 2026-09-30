@@ -4,6 +4,8 @@ import { env } from "../../config/env.js";
 import { accounts } from "../../db/schema/users.js";
 import { products } from "../../db/schema/ecommerce.js";
 import { availabilities, blockedSlots, bookings, classCredits, weeklySlots } from "../../db/schema/scheduling.js";
+import { escapeHtml } from "../payments/payments.service.js";
+import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import "../../plugins/caldav.js";
 
 function icalDate(d: Date): string {
@@ -452,18 +454,23 @@ export async function createStudentBooking(
       method: "REQUEST",
     });
 
+    const safeStudentName = escapeHtml(student[0].displayName);
+    const safeProductName = escapeHtml(product?.name ?? "inglés");
+
     await fastify.mailer.sendMail({
       from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
       to: student[0].email,
       subject: "✅ Clase confirmada",
-      html: `
-        <p>Hola ${student[0].displayName},</p>
-        <p>Tu clase de <strong>${product?.name ?? "inglés"}</strong> está confirmada.</p>
-        <p><strong>Fecha:</strong> ${bogotaDate} (Colombia)</p>
-        ${meetLink ? `<p><strong>Link de videollamada:</strong> <a href="${meetLink}">${meetLink}</a></p>` : ""}
-        <p>Si tienes preguntas, responde a este correo.</p>
-        <p>— ${env.smtp.fromName}</p>
-      `,
+      html: renderEmailHtml({
+        title: "Clase confirmada",
+        bodyHtml: `
+          <p>Hola ${safeStudentName},</p>
+          <p>Tu clase de <strong>${safeProductName}</strong> está confirmada.</p>
+          <p><strong>Fecha:</strong> ${bogotaDate} (Colombia)</p>
+          ${meetLink ? `<p><strong>Link de videollamada:</strong> <a href="${meetLink}" style="color:${BRAND_COLOR};">${meetLink}</a></p>` : ""}
+          <p>Si tienes preguntas, responde a este correo.</p>
+        `,
+      }),
       attachments: [
         {
           filename: "clase.ics",
@@ -476,7 +483,69 @@ export async function createStudentBooking(
     fastify.log.error({ err }, "Failed to send booking confirmation email");
   }
 
+  await notifyAdminsOfBooking(fastify, {
+    studentName: student[0].displayName,
+    productName: product?.name ?? "English",
+    startsAt: startsAt!,
+    meetLink,
+  });
+
   return { bookingId: bookingId!, meetLink, startsAt: startsAt! };
+}
+
+/**
+ * Every account with role "admin" gets notified — not just a single
+ * hardcoded address, so this keeps working if more admins are added later.
+ * Runs for both a fresh booking and the "new" half of a reschedule (same
+ * call site), which is the right signal either way: the admin's calendar
+ * changed, they should know.
+ */
+async function notifyAdminsOfBooking(
+  fastify: FastifyInstance,
+  booking: { studentName: string; productName: string; startsAt: Date; meetLink: string | null },
+): Promise<void> {
+  try {
+    // A fixed inbox (env.campus.adminNotificationEmail) takes priority — it
+    // doesn't need to be a login account at all, just where the alert should
+    // land. Falls back to querying role="admin" accounts when unset, so this
+    // keeps working even without that env var configured.
+    let recipients: string[];
+    if (env.campus.adminNotificationEmail) {
+      recipients = [env.campus.adminNotificationEmail];
+    } else {
+      const admins = await fastify.drizzle
+        .select({ email: accounts.email })
+        .from(accounts)
+        .where(and(eq(accounts.role, "admin"), eq(accounts.isActive, true)));
+      recipients = admins.map((a) => a.email);
+    }
+    if (recipients.length === 0) return;
+
+    const bogotaDate = new Intl.DateTimeFormat("es-CO", {
+      timeZone: "America/Bogota",
+      dateStyle: "full",
+      timeStyle: "short",
+    }).format(booking.startsAt);
+
+    const safeStudent = escapeHtml(booking.studentName);
+    const safeProduct = escapeHtml(booking.productName);
+
+    await fastify.mailer.sendMail({
+      from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
+      to: recipients.join(","),
+      subject: `📅 Nueva clase agendada — ${safeStudent}`,
+      html: renderEmailHtml({
+        title: "Nueva clase agendada",
+        bodyHtml: `
+          <p>${safeStudent} agendó una clase de <strong>${safeProduct}</strong>.</p>
+          <p><strong>Fecha:</strong> ${bogotaDate} (Colombia)</p>
+          ${booking.meetLink ? `<p><strong>Link de videollamada:</strong> <a href="${booking.meetLink}" style="color:${BRAND_COLOR};">${booking.meetLink}</a></p>` : ""}
+        `,
+      }),
+    });
+  } catch (err) {
+    fastify.log.error({ err }, "Failed to send admin booking notification email");
+  }
 }
 
 export async function listStudentBookings(fastify: FastifyInstance, userId: string) {

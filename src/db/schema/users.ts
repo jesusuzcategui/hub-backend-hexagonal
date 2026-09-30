@@ -65,3 +65,23 @@ export const refreshTokens = usersSchema.table(
     index("idx_refresh_tokens_family").on(table.familyId),
   ],
 );
+
+// Same shape/TTL pattern as refresh_tokens (opaque token, hashed at rest,
+// single-use). Kept separate from refresh_tokens rather than reusing it —
+// a password-reset token must never double as a session credential.
+export const passwordResetTokens = usersSchema.table(
+  "password_reset_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_password_reset_tokens_user").on(table.userId),
+  ],
+);

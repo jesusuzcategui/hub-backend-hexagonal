@@ -2,9 +2,11 @@ import { eq, and, isNull, gt } from "drizzle-orm";
 import * as argon2 from "argon2";
 import { randomBytes, createHash } from "crypto";
 import { FastifyInstance } from "fastify";
-import { accounts, refreshTokens } from "../../db/schema";
+import { accounts, refreshTokens, passwordResetTokens } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { env } from "../../config/env";
+import { escapeHtml } from "../payments/payments.service";
+import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template";
 import type { RegisterInput, LoginInput } from "./auth.schemas";
 
 const ARGON2_OPTIONS: argon2.Options = {
@@ -132,6 +134,83 @@ export async function logoutUser(
     .update(refreshTokens)
     .set({ revokedAt: new Date() })
     .where(and(eq(refreshTokens.tokenHash, tokenHash), isNull(refreshTokens.revokedAt)));
+}
+
+const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000; // 1h
+
+export async function requestPasswordReset(fastify: FastifyInstance, email: string): Promise<void> {
+  const db = fastify.drizzle;
+
+  const account = await db.query.accounts.findFirst({
+    where: and(eq(accounts.email, email.toLowerCase()), eq(accounts.isActive, true)),
+    columns: { id: true, email: true, displayName: true },
+  });
+  // Deliberately silent on a miss — responding differently for
+  // registered vs unregistered emails lets an attacker enumerate accounts.
+  if (!account) return;
+
+  const { raw, hash } = generateRefreshToken();
+  await db.insert(passwordResetTokens).values({
+    userId: account.id,
+    tokenHash: hash,
+    expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+  });
+
+  const origin = env.campus.origin ?? "https://campus.jesusuzcategui.com";
+  const resetUrl = `${origin}/reset-password?token=${raw}`;
+  const safeName = escapeHtml(account.displayName);
+
+  await fastify.mailer.sendMail({
+    from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
+    to: account.email,
+    subject: "Recupera tu contraseña",
+    html: renderEmailHtml({
+      title: "Recupera tu contraseña",
+      bodyHtml: `
+        <p>Hola ${safeName},</p>
+        <p>Recibimos una solicitud para restablecer tu contraseña. Si fuiste tú, haz clic en el siguiente botón (válido por 1 hora):</p>
+        <p style="margin:24px 0;">
+          <a href="${resetUrl}" style="display:inline-block; background-color:${BRAND_COLOR}; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:8px; font-weight:600;">Restablecer contraseña</a>
+        </p>
+        <p style="color:#8a939c; font-size:13px;">Si el botón no funciona, copia y pega este enlace: <br>${resetUrl}</p>
+        <p>Si no fuiste tú, puedes ignorar este correo — tu contraseña no cambiará.</p>
+      `,
+    }),
+  });
+}
+
+export async function resetPassword(
+  fastify: FastifyInstance,
+  rawToken: string,
+  newPassword: string,
+): Promise<void> {
+  const db = fastify.drizzle;
+  const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+  const now = new Date();
+
+  const token = await db.query.passwordResetTokens.findFirst({
+    where: and(
+      eq(passwordResetTokens.tokenHash, tokenHash),
+      isNull(passwordResetTokens.usedAt),
+      gt(passwordResetTokens.expiresAt, now),
+    ),
+    columns: { id: true, userId: true },
+  });
+  if (!token) {
+    throw new AppError(401, "INVALID_RESET_TOKEN", "This reset link is invalid or has expired");
+  }
+
+  const passwordHash = await argon2.hash(newPassword, ARGON2_OPTIONS);
+
+  await db.update(accounts).set({ passwordHash, updatedAt: now }).where(eq(accounts.id, token.userId));
+  await db.update(passwordResetTokens).set({ usedAt: now }).where(eq(passwordResetTokens.id, token.id));
+  // Changing the password invalidates every existing session — otherwise
+  // a reset doesn't actually lock out whoever the buyer was protecting
+  // against (e.g. a stolen refresh token keeps working after "recovery").
+  await db
+    .update(refreshTokens)
+    .set({ revokedAt: now })
+    .where(and(eq(refreshTokens.userId, token.userId), isNull(refreshTokens.revokedAt)));
 }
 
 async function issueTokens(

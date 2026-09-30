@@ -26,6 +26,7 @@ import { PaypalProvider } from "../../adapters/payments/paypal-provider";
 import { ManualTransferProvider } from "../../adapters/payments/manual-transfer-provider";
 import { getOrderKindRegistry, CLASS_CREDIT_PLAN_KIND, CLASS_CREDIT_PLAN_VERSION } from "./kind-registry";
 import { epaycoStatusMapper, paypalStatusMapper, manualTransferStatusMapper } from "./provider-status-mappers";
+import { renderEmailHtml } from "../../lib/email-template";
 
 export type PaymentMethod = "epayco" | "paypal" | "manual_transfer";
 
@@ -320,6 +321,11 @@ export interface PublicOrderStatusDto {
   productName: string | null;
   creditsCount: number | null;
   paymentMethod: string | null;
+  // null for a custom (product-less) order — "cuenta de cobro" charges have
+  // nothing to fulfill and no student account to send the buyer to, unlike
+  // a class-credit plan purchase. The thank-you page uses this to decide
+  // whether to CTA "go to my account" or just confirm payment.
+  productId: string | null;
 }
 
 /**
@@ -371,6 +377,7 @@ export async function getPublicOrderStatus(
     productName,
     paymentMethod: latestAttempt?.provider ?? null,
     creditsCount: metadata?.creditsCount ?? null,
+    productId: metadata?.productId ?? null,
   };
 }
 
@@ -530,7 +537,7 @@ async function applySettlementSideEffects(
       from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
       to: account.email,
       subject,
-      html: body,
+      html: renderEmailHtml({ title: subject, bodyHtml: body, locale }),
     });
   } catch (err) {
     fastify.log.error({ err, orderId: order.id }, "Failed to send settlement confirmation email");

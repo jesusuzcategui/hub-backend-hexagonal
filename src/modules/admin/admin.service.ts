@@ -17,6 +17,7 @@ import { AppError } from "../../lib/errors";
 import "../../plugins/caldav.js";
 import { adminRescheduleBooking, createStudentBooking, getAvailableSlots } from "../schedule/schedule.service.js";
 import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer } from "../payments/payments.service.js";
+import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import { createCart } from "../cart/cart.service.js";
 import { toDecimalMajor } from "../../adapters/payments/money.js";
 
@@ -229,13 +230,15 @@ export async function cancelBooking(
         from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
         to: student.email,
         subject: "❌ Clase cancelada",
-        html: `
-          <p>Hola ${student.displayName},</p>
-          <p>Tu clase del <strong>${bogotaDate} (Colombia)</strong> ha sido cancelada.</p>
-          ${reason ? `<p><strong>Motivo:</strong> ${reason}</p>` : ""}
-          <p>Tu crédito ha sido reintegrado. Puedes agendar una nueva clase cuando gustes.</p>
-          <p>— ${env.smtp.fromName}</p>
-        `,
+        html: renderEmailHtml({
+          title: "Clase cancelada",
+          bodyHtml: `
+            <p>Hola ${escapeHtml(student.displayName)},</p>
+            <p>Tu clase del <strong>${bogotaDate} (Colombia)</strong> ha sido cancelada.</p>
+            ${reason ? `<p><strong>Motivo:</strong> ${escapeHtml(reason)}</p>` : ""}
+            <p>Tu crédito ha sido reintegrado. Puedes agendar una nueva clase cuando gustes.</p>
+          `,
+        }),
       });
     }
   } catch (err) {
@@ -455,13 +458,15 @@ export async function deactivateWeeklySlot(fastify: FastifyInstance, id: string)
         from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
         to: booking.studentEmail,
         subject: "📅 Cambio en el horario recurrente de tus asesorías",
-        html: `
-          <p>Hola ${booking.studentName},</p>
-          <p>Tu clase agendada para el <strong>${bogotaDate} (Colombia)</strong> se mantiene sin cambios, no ha sido cancelada.</p>
-          <p>Sin embargo, este horario recurrente semanal dejará de ofrecerse a partir de ahora, por lo que no podrás volver a agendar automáticamente en este mismo horario en el futuro.</p>
-          <p>Si deseas continuar con tus asesorías, podrás elegir otro horario disponible cuando lo necesites.</p>
-          <p>— ${env.smtp.fromName}</p>
-        `,
+        html: renderEmailHtml({
+          title: "Cambio en tu horario recurrente",
+          bodyHtml: `
+            <p>Hola ${escapeHtml(booking.studentName)},</p>
+            <p>Tu clase agendada para el <strong>${bogotaDate} (Colombia)</strong> se mantiene sin cambios, no ha sido cancelada.</p>
+            <p>Sin embargo, este horario recurrente semanal dejará de ofrecerse a partir de ahora, por lo que no podrás volver a agendar automáticamente en este mismo horario en el futuro.</p>
+            <p>Si deseas continuar con tus asesorías, podrás elegir otro horario disponible cuando lo necesites.</p>
+          `,
+        }),
       });
       notifiedBookings += 1;
     } catch (err) {
@@ -926,27 +931,28 @@ export async function createCheckoutLink(
   const safeUrl = escapeHtml(checkoutUrl);
 
   const subject = locale === "en" ? `Complete your purchase — ${displayName}` : `Completá tu compra — ${displayName}`;
-  const html = locale === "en"
+  const buttonLabel = locale === "en" ? "Complete purchase" : "Completar compra";
+  const bodyHtml = locale === "en"
     ? `
       <p>Hi ${safeName},</p>
       <p>You have a pending purchase: <strong>${safeProduct}</strong> (${priceLabel}).</p>
       <p>Click below to choose your payment method and complete it:</p>
-      <p><a href="${safeUrl}">${safeUrl}</a></p>
-      <p>— ${env.smtp.fromName}</p>
+      <p style="margin:24px 0;"><a href="${safeUrl}" style="display:inline-block; background-color:${BRAND_COLOR}; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:8px; font-weight:600;">${buttonLabel}</a></p>
+      <p style="color:#8a939c; font-size:13px;">${safeUrl}</p>
     `
     : `
       <p>Hola ${safeName},</p>
       <p>Tenés una compra pendiente: <strong>${safeProduct}</strong> (${priceLabel}).</p>
       <p>Hacé clic abajo para elegir tu método de pago y completarla:</p>
-      <p><a href="${safeUrl}">${safeUrl}</a></p>
-      <p>— ${env.smtp.fromName}</p>
+      <p style="margin:24px 0;"><a href="${safeUrl}" style="display:inline-block; background-color:${BRAND_COLOR}; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:8px; font-weight:600;">${buttonLabel}</a></p>
+      <p style="color:#8a939c; font-size:13px;">${safeUrl}</p>
     `;
 
   await fastify.mailer.sendMail({
     from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
     to: input.buyerEmail,
     subject,
-    html,
+    html: renderEmailHtml({ title: subject, bodyHtml, locale }),
   });
 
   return { cartToken: cart.token, checkoutUrl };

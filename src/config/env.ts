@@ -68,6 +68,8 @@ const envSchema = z.object({
 
   MENTORING_TEACHER_ID: z.string().uuid(),
   PORTFOLIO_ORIGIN: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
+  CAMPUS_ORIGIN: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
+  ADMIN_NOTIFICATION_EMAIL: z.string().email().optional().or(z.literal('')).transform(v => v || undefined),
 
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
@@ -167,6 +169,10 @@ export const env = {
   mentoring: {
     teacherId: _env.MENTORING_TEACHER_ID,
     portfolioOrigin: _env.PORTFOLIO_ORIGIN,
+  },
+  campus: {
+    origin: _env.CAMPUS_ORIGIN,
+    adminNotificationEmail: _env.ADMIN_NOTIFICATION_EMAIL,
   },
   smtp: {
     host: _env.SMTP_HOST,
