@@ -23,6 +23,7 @@ import {
   listStudentCredits,
   grantCreditsToStudent,
   listStudentActiveCredits,
+  impersonateStudent,
   adminBookForStudent,
   getAvailableSlots,
   listOrders,
@@ -227,6 +228,12 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       ? await reactivateWeeklySlot(fastify, id)
       : await deactivateWeeklySlot(fastify, id);
     reply.send({ data });
+  });
+
+  fastify.post("/admin/students/:id/impersonate", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const accessToken = await impersonateStudent(fastify, id);
+    reply.send({ data: { accessToken } });
   });
 
   // Credits
