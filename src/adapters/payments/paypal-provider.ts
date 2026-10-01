@@ -101,8 +101,21 @@ export class PaypalProvider implements WebhookPaymentProvider {
    * arrives, so this method deliberately does not duplicate that logic.
    */
   async captureOrder(paypalOrderId: string): Promise<{ status: string }> {
-    const { result } = await this.ordersController.captureOrder({ id: paypalOrderId });
-    return { status: result.status ?? "" };
+    try {
+      const { result } = await this.ordersController.captureOrder({ id: paypalOrderId });
+      return { status: result.status ?? "" };
+    } catch (err) {
+      // The frontend re-triggers this on every page load where the order is
+      // still "open" in OUR db — if PayPal's own webhook hasn't landed yet
+      // (a real race, not a bug) and the buyer reloads, a second capture
+      // call lands here. PayPal correctly rejects it (money already moved),
+      // which is success from our side too, not a failure — treat it as one
+      // instead of bubbling a 502 the page has no way to recover from.
+      const details = (err as { result?: { details?: Array<{ issue?: string }> } })?.result?.details;
+      const alreadyCaptured = details?.some((d) => d.issue === "ORDER_ALREADY_CAPTURED");
+      if (alreadyCaptured) return { status: "COMPLETED" };
+      throw err;
+    }
   }
 
   private async oauthToken(): Promise<string> {
