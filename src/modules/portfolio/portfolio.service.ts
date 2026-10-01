@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { env } from "../../config/env.js";
 import { bookings, mentoringRequests, weeklySlots } from "../../db/schema/scheduling.js";
 import type { BookSlotBody, SubmitReviewBody } from "./portfolio.schemas.js";
+import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import "../../plugins/caldav.js";
 import "../../plugins/mailer.js";
 
@@ -384,23 +385,23 @@ ${message ? `<h3 style="margin:20px 0 8px">Mensaje</h3><p style="white-space:pre
       from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
       to: email,
       subject: isEs ? "✅ Solicitud de asesoría recibida" : "✅ Mentoring request received",
-      html: isEs ? `
+      html: renderEmailHtml({
+        title: isEs ? "Solicitud recibida" : "Request received",
+        locale: isEs ? "es" : "en",
+        bodyHtml: isEs ? `
 <p>Hola ${esc(name)},</p>
 <p>Recibí tu solicitud de asesoría de <strong>${esc(typeLbl)}</strong>.</p>
 <p><strong>Fecha tentativa:</strong> ${esc(bogotaDateEs)} (hora Colombia)</p>
-<p><strong>Enlace Jitsi para la sesión:</strong><br>
-<a href="${esc(jitsiUrl)}" style="display:inline-block;margin-top:6px;padding:10px 18px;background:#0d9488;color:#fff;text-decoration:none;border-radius:4px;font-weight:600">${esc(jitsiUrl)}</a></p>
-<p style="font-size:12px;color:#888">El enlace estará activo el día de la sesión. Te confirmaré la cita por WhatsApp.</p>
-<p>— Jesus Uzcategui</p>
+<p style="margin:24px 0;"><a href="${esc(jitsiUrl)}" style="display:inline-block; background-color:${BRAND_COLOR}; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:8px; font-weight:600;">Unirme a la videollamada</a></p>
+<p style="font-size:12px;color:#8a939c">El enlace estará activo el día de la sesión. Te confirmaré la cita por WhatsApp.</p>
       `.trim() : `
 <p>Hi ${esc(name)},</p>
 <p>I received your mentoring request for <strong>${esc(typeLblEn)}</strong>.</p>
 <p><strong>Tentative date:</strong> ${esc(bogotaDateEn)} (Colombia Time)</p>
-<p><strong>Your Jitsi link for the session:</strong><br>
-<a href="${esc(jitsiUrl)}" style="display:inline-block;margin-top:6px;padding:10px 18px;background:#0d9488;color:#fff;text-decoration:none;border-radius:4px;font-weight:600">${esc(jitsiUrl)}</a></p>
-<p style="font-size:12px;color:#888">The link will be active on the day of the session. I'll confirm the appointment via WhatsApp.</p>
-<p>— Jesus Uzcategui</p>
+<p style="margin:24px 0;"><a href="${esc(jitsiUrl)}" style="display:inline-block; background-color:${BRAND_COLOR}; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:8px; font-weight:600;">Join the video call</a></p>
+<p style="font-size:12px;color:#8a939c">The link will be active on the day of the session. I'll confirm the appointment via WhatsApp.</p>
       `.trim(),
+      }),
       attachments: [
         {
           filename: "asesoria.ics",

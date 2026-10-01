@@ -11,8 +11,14 @@ function mapStrapiToDb(p: StrapiProduct) {
     slug: p.slug,
     name: p.name,
     description: p.description ?? null,
+    // priceCop is stored as amountMinor directly — correct as-is, since COP
+    // has no minor unit (see money.ts's minorUnitExponent: COP exponent 0).
+    // priceUsd must be cents to match USD's exponent of 2 (how it's later
+    // used as amountMinor in priceCartItems/toDecimalMajor for PayPal), but
+    // Strapi's priceUSD field is edited as whole dollars — convert here or
+    // every USD charge undercharges 100x.
     priceCop: p.priceCOP,
-    priceUsd: p.priceUSD,
+    priceUsd: Math.round(p.priceUSD * 100),
     isActive: p.isActive,
     metadata: p.metadata ?? {},
     updatedAt: new Date(),
@@ -53,6 +59,26 @@ export async function listProducts(fastify: FastifyInstance) {
       metadata: true,
     },
     orderBy: (p, { asc }) => [asc(p.priceCop)],
+  });
+}
+
+// Admin: every product (active + inactive/unpublished), with sync
+// provenance — updatedAt doubles as "last synced from Strapi" since every
+// sync path (webhook or manual) touches it, and there's no separate
+// sync-log table to maintain.
+export async function listProductsForAdmin(fastify: FastifyInstance) {
+  return fastify.drizzle.query.products.findMany({
+    columns: {
+      id: true,
+      slug: true,
+      name: true,
+      priceCop: true,
+      priceUsd: true,
+      isActive: true,
+      strapiDocumentId: true,
+      updatedAt: true,
+    },
+    orderBy: (p, { desc }) => [desc(p.updatedAt)],
   });
 }
 

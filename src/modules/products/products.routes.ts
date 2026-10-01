@@ -4,6 +4,7 @@ import { AppError } from "../../lib/errors";
 import { env } from "../../config/env";
 import {
   listProductsController,
+  listProductsForAdminController,
   getProductController,
   syncAllController,
   strapiWebhookController,
@@ -51,5 +52,11 @@ export async function productsRoutes(fastify: FastifyInstance): Promise<void> {
     "/admin/products/sync",
     { preHandler: [fastify.authenticate, requireAdmin] },
     syncAllController,
+  );
+
+  fastify.get(
+    "/admin/products",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    listProductsForAdminController,
   );
 }

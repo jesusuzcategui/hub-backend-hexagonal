@@ -9,7 +9,9 @@ import {
   unblockStudent,
   deleteStudent,
   listBookings,
+  listClassesGiven,
   cancelBooking,
+  markAttendance,
   listAvailabilities,
   createAvailability,
   deleteAvailability,
@@ -23,6 +25,20 @@ import {
   listStudentActiveCredits,
   adminBookForStudent,
   getAvailableSlots,
+  listOrders,
+  validateTransfer,
+  resolveReview,
+  getOrderDetail,
+  getOrderProof,
+  listCoupons,
+  createCoupon,
+  deactivateCoupon,
+  reactivateCoupon,
+  createCheckoutLink,
+  rescheduleBooking,
+  listBlockedSlots,
+  createBlockedSlot,
+  deleteBlockedSlot,
 } from "./admin.service";
 
 async function requireAdmin(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
@@ -103,11 +119,64 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     reply.send({ data: await listBookings(fastify, status) });
   });
 
+  // Reports
+  fastify.get("/admin/reports/classes", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { studentId, productId } = req.query as { studentId?: string; productId?: string };
+    reply.send({ data: await listClassesGiven(fastify, { studentId, productId }) });
+  });
+
   fastify.patch("/admin/bookings/:id/cancel", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const { reason } = (req.body ?? {}) as { reason?: string };
     await cancelBooking(fastify, id, reason);
     reply.send({ data: { cancelled: true } });
+  });
+
+  fastify.patch(
+    "/admin/bookings/:id/attendance",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { attended } = (req.body ?? {}) as { attended?: boolean };
+      if (typeof attended !== "boolean") {
+        throw new AppError(400, "MISSING_FIELDS", "attended (boolean) is required");
+      }
+      reply.send({ data: await markAttendance(fastify, id, attended) });
+    },
+  );
+
+  fastify.patch(
+    "/admin/bookings/:id/reschedule",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { newSlotId } = (req.body ?? {}) as { newSlotId?: string };
+      if (!newSlotId) throw new AppError(400, "MISSING_FIELDS", "newSlotId is required");
+      reply.send({ data: await rescheduleBooking(fastify, id, newSlotId) });
+    },
+  );
+
+  // Blocked slots (teacher unavailability — vacation, one-off blocks)
+  fastify.get("/admin/blocked-slots", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
+    reply.send({ data: await listBlockedSlots(fastify) });
+  });
+
+  fastify.post("/admin/blocked-slots", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const body = (req.body ?? {}) as { startsAt?: string; endsAt?: string; reason?: string };
+    if (!body.startsAt || !body.endsAt) throw new AppError(400, "MISSING_FIELDS", "startsAt and endsAt are required");
+    const data = await createBlockedSlot(fastify, {
+      teacherId: req.user.sub as string,
+      startsAt: body.startsAt,
+      endsAt: body.endsAt,
+      reason: body.reason,
+    });
+    reply.status(201).send({ data });
+  });
+
+  fastify.delete("/admin/blocked-slots/:id", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await deleteBlockedSlot(fastify, id);
+    reply.send({ data: { deleted: true } });
   });
 
   // Availabilities
@@ -206,5 +275,143 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
   // Available slots (reused from schedule module)
   fastify.get("/admin/slots", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
     reply.send({ data: await getAvailableSlots(fastify) });
+  });
+
+  // Orders (payments module)
+  fastify.get("/admin/orders", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { status, fulfillmentStatus } = req.query as { status?: string; fulfillmentStatus?: string };
+    reply.send({ data: await listOrders(fastify, { status, fulfillmentStatus }) });
+  });
+
+  fastify.post(
+    "/admin/orders/:id/validate-transfer",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { decision } = (req.body ?? {}) as { decision?: "approve" | "reject" };
+      if (decision !== "approve" && decision !== "reject") {
+        throw new AppError(400, "INVALID_DECISION", "decision must be approve or reject");
+      }
+      const result = await validateTransfer(fastify, id, decision);
+      reply.send({ data: { outcome: result.outcome } });
+    },
+  );
+
+  fastify.post(
+    "/admin/orders/:id/resolve-review",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      await resolveReview(fastify, id);
+      reply.send({ data: { outcome: "resolved" } });
+    },
+  );
+
+  fastify.get("/admin/orders/:id", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    reply.send({ data: await getOrderDetail(fastify, id) });
+  });
+
+  fastify.get("/admin/orders/:id/proof", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { buffer, filename, contentType, inline } = await getOrderProof(fastify, id);
+    reply
+      .header("Content-Type", contentType)
+      .header("X-Content-Type-Options", "nosniff")
+      .header("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${filename}"`)
+      .send(buffer);
+  });
+
+  // Coupons
+  fastify.get("/admin/coupons", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
+    reply.send({ data: await listCoupons(fastify) });
+  });
+
+  fastify.post("/admin/coupons", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      code?: string;
+      type?: "percent" | "fixed";
+      value?: number;
+      currency?: string;
+      maxRedemptions?: number;
+      expiresAt?: string;
+    };
+    if (!body.code || !body.type || body.value === undefined) {
+      throw new AppError(400, "MISSING_FIELDS", "code, type, and value are required");
+    }
+    if (body.type !== "percent" && body.type !== "fixed") {
+      throw new AppError(400, "INVALID_TYPE", "type must be percent or fixed");
+    }
+    const data = await createCoupon(fastify, {
+      code: body.code,
+      type: body.type,
+      value: body.value,
+      currency: body.currency ?? null,
+      maxRedemptions: body.maxRedemptions ?? null,
+      expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+    });
+    reply.status(201).send({ data });
+  });
+
+  fastify.post(
+    "/admin/coupons/:id/deactivate",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      reply.send({ data: await deactivateCoupon(fastify, id) });
+    },
+  );
+
+  fastify.post(
+    "/admin/coupons/:id/reactivate",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      reply.send({ data: await reactivateCoupon(fastify, id) });
+    },
+  );
+
+  // Admin-generated checkout links: creates a cart on the buyer's behalf and
+  // emails them the link — same public /cart/:token page the storefront uses.
+  fastify.post("/admin/checkout-links", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      buyerEmail?: string;
+      buyerName?: string;
+      productId?: string;
+      qty?: number;
+      customAmountMinor?: number;
+      customLabel?: string;
+      currency?: string;
+      locale?: "en" | "es";
+    };
+    if (!body.buyerEmail || !body.currency) {
+      throw new AppError(400, "MISSING_FIELDS", "buyerEmail and currency are required");
+    }
+
+    const data = body.customAmountMinor !== undefined
+      ? await (async () => {
+          if (!body.customLabel) throw new AppError(400, "MISSING_FIELDS", "customLabel is required for a custom charge");
+          return createCheckoutLink(fastify, {
+            buyerEmail: body.buyerEmail!,
+            buyerName: body.buyerName,
+            currency: body.currency!,
+            locale: body.locale,
+            customAmountMinor: body.customAmountMinor!,
+            customLabel: body.customLabel,
+          });
+        })()
+      : await (async () => {
+          if (!body.productId) throw new AppError(400, "MISSING_FIELDS", "productId is required for a plan order");
+          return createCheckoutLink(fastify, {
+            buyerEmail: body.buyerEmail!,
+            buyerName: body.buyerName,
+            currency: body.currency!,
+            locale: body.locale,
+            productId: body.productId,
+            qty: body.qty,
+          });
+        })();
+
+    reply.status(201).send({ data });
   });
 }

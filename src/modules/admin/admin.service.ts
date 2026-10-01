@@ -7,13 +7,19 @@ import {
   bookings,
   availabilities,
   weeklySlots,
+  blockedSlots,
   classCredits,
   products,
   refreshTokens,
+  coupons,
 } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import "../../plugins/caldav.js";
-import { createStudentBooking, getAvailableSlots } from "../schedule/schedule.service.js";
+import { adminRescheduleBooking, createStudentBooking, getAvailableSlots } from "../schedule/schedule.service.js";
+import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer, resolveOrderReview } from "../payments/payments.service.js";
+import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
+import { createCart } from "../cart/cart.service.js";
+import { toDecimalMajor } from "../../adapters/payments/money.js";
 
 const ARGON2_OPTIONS: argon2.Options = {
   type: argon2.argon2id,
@@ -156,6 +162,37 @@ export async function listBookings(fastify: FastifyInstance, status?: string) {
   return baseQuery;
 }
 
+// Classes actually given — distinct from listBookings (which shows every
+// status for the calendar view): this is "completed" only, with
+// student/package filters, for the Reportes page.
+export async function listClassesGiven(
+  fastify: FastifyInstance,
+  filters: { studentId?: string; productId?: string },
+) {
+  const db = fastify.drizzle;
+
+  const conditions = [eq(bookings.status, "completed")];
+  if (filters.studentId) conditions.push(eq(bookings.studentId, filters.studentId));
+  if (filters.productId) conditions.push(eq(bookings.productId, filters.productId));
+
+  return db
+    .select({
+      id: bookings.id,
+      startsAt: bookings.startsAt,
+      endsAt: bookings.endsAt,
+      studentId: accounts.id,
+      studentName: accounts.displayName,
+      studentEmail: accounts.email,
+      productId: products.id,
+      productName: products.name,
+    })
+    .from(bookings)
+    .leftJoin(accounts, eq(accounts.id, bookings.studentId))
+    .leftJoin(products, eq(products.id, bookings.productId))
+    .where(and(...conditions))
+    .orderBy(desc(bookings.startsAt));
+}
+
 export async function cancelBooking(
   fastify: FastifyInstance,
   bookingId: string,
@@ -224,18 +261,54 @@ export async function cancelBooking(
         from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
         to: student.email,
         subject: "❌ Clase cancelada",
-        html: `
-          <p>Hola ${student.displayName},</p>
-          <p>Tu clase del <strong>${bogotaDate} (Colombia)</strong> ha sido cancelada.</p>
-          ${reason ? `<p><strong>Motivo:</strong> ${reason}</p>` : ""}
-          <p>Tu crédito ha sido reintegrado. Puedes agendar una nueva clase cuando gustes.</p>
-          <p>— ${env.smtp.fromName}</p>
-        `,
+        html: renderEmailHtml({
+          title: "Clase cancelada",
+          bodyHtml: `
+            <p>Hola ${escapeHtml(student.displayName)},</p>
+            <p>Tu clase del <strong>${bogotaDate} (Colombia)</strong> ha sido cancelada.</p>
+            ${reason ? `<p><strong>Motivo:</strong> ${escapeHtml(reason)}</p>` : ""}
+            <p>Tu crédito ha sido reintegrado. Puedes agendar una nueva clase cuando gustes.</p>
+          `,
+        }),
       });
     }
   } catch (err) {
     fastify.log.error({ err }, "Failed to send cancellation email");
   }
+}
+
+// Attendance is marked after the class happens. The credit was already consumed at
+// booking time (see schedule.service.ts), so marking `attended: false` does NOT refund
+// it — a no-show still spends the credit, same policy as most mentoring/coaching platforms.
+export async function markAttendance(
+  fastify: FastifyInstance,
+  bookingId: string,
+  attended: boolean,
+) {
+  const db = fastify.drizzle;
+
+  const booking = await db.query.bookings.findFirst({
+    where: eq(bookings.id, bookingId),
+    columns: { id: true, status: true },
+  });
+
+  if (!booking) throw new AppError(404, "BOOKING_NOT_FOUND", "Booking not found");
+  if (booking.status === "cancelled") {
+    throw new AppError(400, "BOOKING_CANCELLED", "Cannot mark attendance on a cancelled booking");
+  }
+
+  const [updated] = await db
+    .update(bookings)
+    .set({ status: attended ? "completed" : "no_show", updatedAt: new Date() })
+    .where(eq(bookings.id, bookingId))
+    .returning({
+      id: bookings.id,
+      status: bookings.status,
+      startsAt: bookings.startsAt,
+      endsAt: bookings.endsAt,
+    });
+
+  return updated;
 }
 
 export async function listAvailabilities(fastify: FastifyInstance) {
@@ -416,13 +489,15 @@ export async function deactivateWeeklySlot(fastify: FastifyInstance, id: string)
         from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
         to: booking.studentEmail,
         subject: "📅 Cambio en el horario recurrente de tus asesorías",
-        html: `
-          <p>Hola ${booking.studentName},</p>
-          <p>Tu clase agendada para el <strong>${bogotaDate} (Colombia)</strong> se mantiene sin cambios, no ha sido cancelada.</p>
-          <p>Sin embargo, este horario recurrente semanal dejará de ofrecerse a partir de ahora, por lo que no podrás volver a agendar automáticamente en este mismo horario en el futuro.</p>
-          <p>Si deseas continuar con tus asesorías, podrás elegir otro horario disponible cuando lo necesites.</p>
-          <p>— ${env.smtp.fromName}</p>
-        `,
+        html: renderEmailHtml({
+          title: "Cambio en tu horario recurrente",
+          bodyHtml: `
+            <p>Hola ${escapeHtml(booking.studentName)},</p>
+            <p>Tu clase agendada para el <strong>${bogotaDate} (Colombia)</strong> se mantiene sin cambios, no ha sido cancelada.</p>
+            <p>Sin embargo, este horario recurrente semanal dejará de ofrecerse a partir de ahora, por lo que no podrás volver a agendar automáticamente en este mismo horario en el futuro.</p>
+            <p>Si deseas continuar con tus asesorías, podrás elegir otro horario disponible cuando lo necesites.</p>
+          `,
+        }),
       });
       notifiedBookings += 1;
     } catch (err) {
@@ -487,6 +562,7 @@ export async function grantCreditsToStudent(
     grantedBy,
     expiresAt,
     notes,
+    orderId,
   }: {
     productId: string;
     totalCredits: number;
@@ -494,6 +570,8 @@ export async function grantCreditsToStudent(
     grantedBy: string;
     expiresAt?: string;
     notes?: string;
+    /** Links the credit block back to the payments order that funded it (settlement callers). Manual admin grants (no order behind them) omit this and get NULL, same as before. */
+    orderId?: string | null;
   },
 ) {
   const db = fastify.drizzle;
@@ -517,7 +595,7 @@ export async function grantCreditsToStudent(
     .values({
       userId,
       productId,
-      orderId: null,
+      orderId: orderId ?? null,
       grantedBy,
       paymentMethod,
       grantNotes: notes ?? null,
@@ -677,4 +755,240 @@ export async function deleteStudent(fastify: FastifyInstance, userId: string) {
   });
 }
 
+export async function listOrders(
+  fastify: FastifyInstance,
+  filters: { status?: string; fulfillmentStatus?: string },
+) {
+  return listOrdersForAdmin(fastify, filters);
+}
+
+export async function validateTransfer(
+  fastify: FastifyInstance,
+  orderId: string,
+  decision: "approve" | "reject",
+) {
+  return validateManualTransfer(fastify, orderId, decision);
+}
+
+export async function resolveReview(fastify: FastifyInstance, orderId: string) {
+  return resolveOrderReview(fastify, orderId);
+}
+
+export async function getOrderDetail(fastify: FastifyInstance, orderId: string) {
+  return getOrderDetailForAdmin(fastify, orderId);
+}
+
+export async function getOrderProof(fastify: FastifyInstance, orderId: string) {
+  return getManualTransferProof(fastify, orderId);
+}
+
+// --- Coupons ------------------------------------------------------------------------
+
+export async function listCoupons(fastify: FastifyInstance) {
+  return fastify.drizzle.query.coupons.findMany({ orderBy: desc(coupons.createdAt) });
+}
+
+export async function createCoupon(
+  fastify: FastifyInstance,
+  input: {
+    code: string;
+    type: "percent" | "fixed";
+    value: number;
+    currency?: string | null;
+    maxRedemptions?: number | null;
+    expiresAt?: Date | null;
+  },
+) {
+  const code = input.code.trim().toUpperCase();
+  if (!code) throw new AppError(400, "INVALID_CODE", "code is required");
+  if (input.type === "percent" && (input.value < 0 || input.value > 100)) {
+    throw new AppError(400, "INVALID_VALUE", "percent value must be between 0 and 100");
+  }
+  if (input.type === "fixed" && input.value < 0) {
+    throw new AppError(400, "INVALID_VALUE", "fixed value must be >= 0");
+  }
+
+  const existing = await fastify.drizzle.query.coupons.findFirst({
+    where: eq(coupons.code, code),
+    columns: { id: true },
+  });
+  if (existing) throw new AppError(409, "COUPON_EXISTS", "A coupon with this code already exists");
+
+  const [coupon] = await fastify.drizzle
+    .insert(coupons)
+    .values({
+      code,
+      type: input.type,
+      value: input.value,
+      currency: input.type === "fixed" ? (input.currency ?? null) : null,
+      maxRedemptions: input.maxRedemptions ?? null,
+      expiresAt: input.expiresAt ?? null,
+    })
+    .returning();
+
+  return coupon;
+}
+
+export async function deactivateCoupon(fastify: FastifyInstance, id: string) {
+  const db = fastify.drizzle;
+  const coupon = await db.query.coupons.findFirst({ where: eq(coupons.id, id), columns: { id: true } });
+  if (!coupon) throw new AppError(404, "COUPON_NOT_FOUND", "Coupon not found");
+
+  const [updated] = await db
+    .update(coupons)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(eq(coupons.id, id))
+    .returning();
+  return updated;
+}
+
+export async function reactivateCoupon(fastify: FastifyInstance, id: string) {
+  const db = fastify.drizzle;
+  const coupon = await db.query.coupons.findFirst({ where: eq(coupons.id, id), columns: { id: true } });
+  if (!coupon) throw new AppError(404, "COUPON_NOT_FOUND", "Coupon not found");
+
+  const [updated] = await db
+    .update(coupons)
+    .set({ isActive: true, updatedAt: new Date() })
+    .where(eq(coupons.id, id))
+    .returning();
+  return updated;
+}
+
 export { getAvailableSlots };
+
+// --- Reschedule --------------------------------------------------------------------
+
+export async function rescheduleBooking(fastify: FastifyInstance, bookingId: string, newSlotId: string) {
+  try {
+    return await adminRescheduleBooking(fastify, { bookingId, newSlotId });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Reschedule failed";
+    const status = msg.includes("not found") ? 404 : msg.includes("already booked") || msg.includes("blocked") ? 409 : 400;
+    throw new AppError(status, "RESCHEDULE_FAILED", msg);
+  }
+}
+
+// --- Blocked slots -------------------------------------------------------------------
+
+export async function listBlockedSlots(fastify: FastifyInstance) {
+  return fastify.drizzle.query.blockedSlots.findMany({ orderBy: asc(blockedSlots.startsAt) });
+}
+
+export async function createBlockedSlot(
+  fastify: FastifyInstance,
+  input: { teacherId: string; startsAt: string; endsAt: string; reason?: string },
+) {
+  const startsAt = new Date(input.startsAt);
+  const endsAt = new Date(input.endsAt);
+  if (isNaN(startsAt.getTime()) || isNaN(endsAt.getTime())) {
+    throw new AppError(400, "INVALID_DATE", "Invalid date format");
+  }
+  if (endsAt <= startsAt) throw new AppError(400, "INVALID_RANGE", "endsAt must be after startsAt");
+
+  const [block] = await fastify.drizzle
+    .insert(blockedSlots)
+    .values({ teacherId: input.teacherId, startsAt, endsAt, reason: input.reason ?? null })
+    .returning();
+  return block;
+}
+
+export async function deleteBlockedSlot(fastify: FastifyInstance, id: string) {
+  const db = fastify.drizzle;
+  const block = await db.query.blockedSlots.findFirst({ where: eq(blockedSlots.id, id), columns: { id: true } });
+  if (!block) throw new AppError(404, "BLOCK_NOT_FOUND", "Blocked slot not found");
+  await db.delete(blockedSlots).where(eq(blockedSlots.id, id));
+}
+
+// --- Admin-generated checkout links ---------------------------------------------------
+//
+// Lets an admin create a cart on a buyer's behalf (no account required — same anonymous
+// cart the storefront uses) and email them the checkout link, instead of the buyer having
+// to start from the shop page themselves. Reuses cart.service.ts's createCart as-is; the
+// buyer picks their own payment method (epayco/paypal/manual transfer) on that page,
+// nothing here decides that for them.
+
+export async function createCheckoutLink(
+  fastify: FastifyInstance,
+  input: {
+    buyerEmail: string;
+    buyerName?: string;
+    currency: string;
+    locale?: "en" | "es";
+  } & (
+    | { productId: string; qty?: number; customAmountMinor?: undefined; customLabel?: undefined }
+    // No real product — an ad-hoc charge (outstanding balance, a one-off
+    // fee) collected through the same checkout-link/cart flow. See
+    // priceCartItems in payments.service.ts for how this is priced.
+    | { productId?: undefined; qty?: undefined; customAmountMinor: number; customLabel: string }
+  ),
+) {
+  const currency = input.currency.toUpperCase();
+  const locale = input.locale ?? "es";
+
+  let cartItem: { planId: string; qty: number; customAmountMinor?: number; customLabel?: string };
+  let displayName: string;
+  let priceMinor: number;
+
+  if (input.customAmountMinor !== undefined) {
+    cartItem = { planId: "custom", qty: 1, customAmountMinor: input.customAmountMinor, customLabel: input.customLabel };
+    displayName = input.customLabel;
+    priceMinor = input.customAmountMinor;
+  } else {
+    const product = await fastify.drizzle.query.products.findFirst({
+      where: eq(products.id, input.productId),
+      columns: { id: true, name: true, priceCop: true, priceUsd: true, isActive: true },
+    });
+    if (!product || !product.isActive) {
+      throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found or inactive");
+    }
+    const qty = input.qty ?? 1;
+    cartItem = { planId: input.productId, qty };
+    displayName = product.name;
+    priceMinor = (currency === "USD" ? product.priceUsd : product.priceCop) * qty;
+  }
+
+  const cart = await createCart(fastify, {
+    items: [cartItem],
+    buyerEmail: input.buyerEmail,
+    buyerName: input.buyerName,
+    currency,
+    locale,
+  });
+
+  const base = (env.app.publicUrl ?? "").replace(/\/+$/, "");
+  const checkoutUrl = locale === "en" ? `${base}/en/cart/${cart.token}` : `${base}/cart/${cart.token}`;
+
+  const priceLabel = `${toDecimalMajor(priceMinor, currency)} ${currency}`;
+
+  const safeName = escapeHtml(input.buyerName ?? input.buyerEmail);
+  const safeProduct = escapeHtml(displayName);
+  const safeUrl = escapeHtml(checkoutUrl);
+
+  const subject = locale === "en" ? `Complete your purchase — ${displayName}` : `Completá tu compra — ${displayName}`;
+  const buttonLabel = locale === "en" ? "Complete purchase" : "Completar compra";
+  const bodyHtml = locale === "en"
+    ? `
+      <p>Hi ${safeName},</p>
+      <p>You have a pending purchase: <strong>${safeProduct}</strong> (${priceLabel}).</p>
+      <p>Click below to choose your payment method and complete it:</p>
+      <p style="margin:24px 0;"><a href="${safeUrl}" style="display:inline-block; background-color:${BRAND_COLOR}; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:8px; font-weight:600;">${buttonLabel}</a></p>
+      <p style="color:#8a939c; font-size:13px;">${safeUrl}</p>
+    `
+    : `
+      <p>Hola ${safeName},</p>
+      <p>Tenés una compra pendiente: <strong>${safeProduct}</strong> (${priceLabel}).</p>
+      <p>Hacé clic abajo para elegir tu método de pago y completarla:</p>
+      <p style="margin:24px 0;"><a href="${safeUrl}" style="display:inline-block; background-color:${BRAND_COLOR}; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:8px; font-weight:600;">${buttonLabel}</a></p>
+      <p style="color:#8a939c; font-size:13px;">${safeUrl}</p>
+    `;
+
+  await fastify.mailer.sendMail({
+    from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
+    to: input.buyerEmail,
+    subject,
+    html: renderEmailHtml({ title: subject, bodyHtml, locale }),
+  });
+
+  return { cartToken: cart.token, checkoutUrl };
+}

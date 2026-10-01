@@ -20,11 +20,30 @@ const envSchema = z.object({
   COOKIE_DOMAIN: z.string().optional(),
 
   APP_PUBLIC_URL: z.string().url().optional(),
-  MP_ACCESS_TOKEN: z.string().default(""),
-  MP_WEBHOOK_SECRET: z.string().default(""),
-  MP_SUCCESS_URL: z.string().default(""),
-  MP_FAILURE_URL: z.string().default(""),
-  MP_PENDING_URL: z.string().default(""),
+
+  // ePayco (Colombia) — direct HTTP integration, no SDK (see epayco-provider.ts).
+  EPAYCO_CUST_ID_CLIENTE: z.string().default(""),
+  EPAYCO_P_KEY: z.string().default(""),
+  EPAYCO_PUBLIC_KEY: z.string().default(""),
+  // Distinct from EPAYCO_P_KEY: this is the API Public/Private Key pair
+  // (dashboard: Integraciones -> Llaves API), used only for the
+  // login/token call when creating a checkout session. EPAYCO_P_KEY is the
+  // separate secret used for the webhook confirmation signature.
+  EPAYCO_PRIVATE_KEY: z.string().default(""),
+  EPAYCO_VALIDATION_BASE_URL: z.string().default("https://api.epayco.co"),
+  EPAYCO_SUCCESS_URL: z.string().default(""),
+  EPAYCO_FAILURE_URL: z.string().default(""),
+  EPAYCO_PENDING_URL: z.string().default(""),
+  EPAYCO_CONFIRMATION_URL: z.string().default(""),
+
+  // WebDAV (Nextcloud) — manual bank transfer proof uploads.
+  WEBDAV_URL: z.string().default(""),
+  WEBDAV_USERNAME: z.string().default(""),
+  WEBDAV_PASSWORD: z.string().default(""),
+
+  // Umami — server-side purchase event dispatch.
+  UMAMI_URL: z.string().default(""),
+  UMAMI_WEBSITE_ID: z.string().default(""),
 
   PAYPAL_CLIENT_ID: z.string().default(""),
   PAYPAL_CLIENT_SECRET: z.string().default(""),
@@ -49,6 +68,8 @@ const envSchema = z.object({
 
   MENTORING_TEACHER_ID: z.string().uuid(),
   PORTFOLIO_ORIGIN: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
+  CAMPUS_ORIGIN: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
+  ADMIN_NOTIFICATION_EMAIL: z.string().email().optional().or(z.literal('')).transform(v => v || undefined),
 
   SMTP_HOST: z.string().min(1),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
@@ -104,12 +125,25 @@ export const env = {
   app: {
     publicUrl: _env.APP_PUBLIC_URL,
   },
-  mercadopago: {
-    accessToken: _env.MP_ACCESS_TOKEN,
-    webhookSecret: _env.MP_WEBHOOK_SECRET,
-    successUrl: _env.MP_SUCCESS_URL,
-    failureUrl: _env.MP_FAILURE_URL,
-    pendingUrl: _env.MP_PENDING_URL,
+  epayco: {
+    custIdCliente: _env.EPAYCO_CUST_ID_CLIENTE,
+    pKey: _env.EPAYCO_P_KEY,
+    publicKey: _env.EPAYCO_PUBLIC_KEY,
+    privateKey: _env.EPAYCO_PRIVATE_KEY,
+    validationBaseUrl: _env.EPAYCO_VALIDATION_BASE_URL,
+    successUrl: _env.EPAYCO_SUCCESS_URL,
+    failureUrl: _env.EPAYCO_FAILURE_URL,
+    pendingUrl: _env.EPAYCO_PENDING_URL,
+    confirmationUrl: _env.EPAYCO_CONFIRMATION_URL,
+  },
+  webdav: {
+    url: _env.WEBDAV_URL,
+    username: _env.WEBDAV_USERNAME,
+    password: _env.WEBDAV_PASSWORD,
+  },
+  umami: {
+    url: _env.UMAMI_URL,
+    websiteId: _env.UMAMI_WEBSITE_ID,
   },
   paypal: {
     clientId: _env.PAYPAL_CLIENT_ID,
@@ -135,6 +169,10 @@ export const env = {
   mentoring: {
     teacherId: _env.MENTORING_TEACHER_ID,
     portfolioOrigin: _env.PORTFOLIO_ORIGIN,
+  },
+  campus: {
+    origin: _env.CAMPUS_ORIGIN,
+    adminNotificationEmail: _env.ADMIN_NOTIFICATION_EMAIL,
   },
   smtp: {
     host: _env.SMTP_HOST,

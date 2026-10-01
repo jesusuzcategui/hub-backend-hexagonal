@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from "fastify";
-import { listProducts, getProductBySlug, syncProductFromStrapi, syncAllProducts } from "./products.service";
+import { listProducts, listProductsForAdmin, getProductBySlug, syncProductFromStrapi, syncAllProducts } from "./products.service";
 import { AppError } from "../../lib/errors";
 import type { StrapiProduct } from "../../lib/strapi";
 
@@ -17,6 +17,14 @@ export async function getProductController(
 ): Promise<void> {
   const product = await getProductBySlug(request.server, request.params.slug);
   reply.status(200).send({ data: product });
+}
+
+export async function listProductsForAdminController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const data = await listProductsForAdmin(request.server);
+  reply.status(200).send({ data });
 }
 
 export async function syncAllController(

@@ -1,11 +1,9 @@
 import {
   boolean,
-  char,
   index,
   integer,
   jsonb,
   pgSchema,
-  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -13,51 +11,30 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { accounts } from "./users";
+import { orders as paymentsOrders } from "./payments";
 
 export const ecommerceSchema = pgSchema("ecommerce");
 
-export const orderStatusEnum = ecommerceSchema.enum("order_status", [
-  "pending",
-  "paid",
-  "failed",
-  "refunded",
-  "cancelled",
-]);
-
-export const subscriptionStatusEnum = ecommerceSchema.enum("subscription_status", [
-  "pending",
-  "active",
-  "paused",
-  "cancelled",
-  "expired",
-]);
-
-export const paymentStatusEnum = ecommerceSchema.enum("payment_status", [
-  "pending",
-  "approved",
-  "rejected",
-  "cancelled",
-  "refunded",
-  "in_mediation",
-  "charged_back",
-]);
-
-export const paymentTypeEnum = ecommerceSchema.enum("payment_type", [
-  "one_time",
-  "subscription_charge",
-]);
-
-export const billingIntervalEnum = ecommerceSchema.enum("billing_interval", [
-  "days",
-  "weeks",
-  "months",
-  "years",
-]);
+// NOTE: the legacy `orders`, `order_items`, `payments`, `subscriptions`,
+// `subscription_plans` tables (and their enums: order_status, subscription_status,
+// payment_status, payment_type, billing_interval) were dropped in the
+// hexagonal-payments-core migration (see drizzle/migrations for the DROP SQL).
+// They had zero consumers in src/modules — grep-verified. Orders now live in
+// `payments.orders` (src/db/schema/payments.ts), owned by hexagonal-payments-core's
+// `Order` aggregate.
 
 export const accessReasonEnum = ecommerceSchema.enum("access_reason", [
   "order",
   "subscription",
 ]);
+
+export const cartStatusEnum = ecommerceSchema.enum("cart_status", [
+  "open",
+  "converted",
+  "abandoned",
+]);
+
+export const couponTypeEnum = ecommerceSchema.enum("coupon_type", ["percent", "fixed"]);
 
 export const products = ecommerceSchema.table(
   "products",
@@ -81,119 +58,45 @@ export const products = ecommerceSchema.table(
   ],
 );
 
-export const subscriptionPlans = ecommerceSchema.table("subscription_plans", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  productId: uuid("product_id")
-    .notNull()
-    .references(() => products.id, { onDelete: "restrict" }),
-  mpPreapprovalPlanId: text("mp_preapproval_plan_id").unique(),
-  name: text("name").notNull(),
-  priceCents: integer("price_cents").notNull(),
-  currency: char("currency", { length: 3 }).notNull().default("ARS"),
-  billingInterval: billingIntervalEnum("billing_interval").notNull(),
-  billingFrequency: smallint("billing_frequency").notNull().default(1),
-  trialDays: smallint("trial_days").notNull().default(0),
-  isActive: boolean("is_active").notNull().default(true),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-export const orders = ecommerceSchema.table(
-  "orders",
+// `id` doubles as the public opaque token used at /cart/:token on the storefront.
+// Postgres' default UUID v4 generator (gen_random_uuid()) keeps it non-sequential
+// and non-guessable without adding a separate token column.
+export const carts = ecommerceSchema.table(
+  "carts",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => accounts.id, { onDelete: "restrict" }),
-    status: orderStatusEnum("status").notNull().default("pending"),
-    subtotalCents: integer("subtotal_cents").notNull(),
-    totalCents: integer("total_cents").notNull(),
-    currency: char("currency", { length: 3 }).notNull().default("ARS"),
-    gateway: text("gateway"),
-    mpPreferenceId: text("mp_preference_id"),
-    mpExternalRef: text("mp_external_ref").unique(),
-    metadata: jsonb("metadata").notNull().default({}),
-    paidAt: timestamp("paid_at", { withTimezone: true }),
+    items: jsonb("items").notNull().default([]), // Array<{ planId: string; qty: number }>, validated with zod at the service layer
+    buyerEmail: text("buyer_email"),
+    buyerName: text("buyer_name"),
+    buyerWhatsapp: text("buyer_whatsapp"),
+    currency: text("currency"),
+    locale: text("locale"),
+    status: cartStatusEnum("status").notNull().default("open"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+  },
+  (table) => [index("idx_carts_status").on(table.status)],
+);
+
+// `code` is normalized to uppercase on write (see cart.service.ts) so the unique index
+// enforces case-insensitive uniqueness without a citext extension dependency.
+export const coupons = ecommerceSchema.table(
+  "coupons",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    code: text("code").notNull(),
+    type: couponTypeEnum("type").notNull(),
+    value: integer("value").notNull(), // percent: 0-100, fixed: minor units of `currency`
+    currency: text("currency"), // only meaningful when type = "fixed"
+    maxRedemptions: integer("max_redemptions"), // null = unlimited
+    redeemedCount: integer("redeemed_count").notNull().default(0),
+    isActive: boolean("is_active").notNull().default(true),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [
-    index("idx_orders_user_status").on(table.userId, table.status),
-    index("idx_orders_mp_external_ref").on(table.mpExternalRef),
-  ],
-);
-
-export const orderItems = ecommerceSchema.table(
-  "order_items",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    orderId: uuid("order_id")
-      .notNull()
-      .references(() => orders.id, { onDelete: "cascade" }),
-    productId: uuid("product_id")
-      .notNull()
-      .references(() => products.id, { onDelete: "restrict" }),
-    quantity: smallint("quantity").notNull().default(1),
-    unitPriceCents: integer("unit_price_cents").notNull(),
-    totalCents: integer("total_cents").notNull(),
-    snapshot: jsonb("snapshot").notNull().default({}),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [index("idx_order_items_order_id").on(table.orderId)],
-);
-
-export const subscriptions = ecommerceSchema.table(
-  "subscriptions",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => accounts.id, { onDelete: "restrict" }),
-    planId: uuid("plan_id")
-      .notNull()
-      .references(() => subscriptionPlans.id, { onDelete: "restrict" }),
-    status: subscriptionStatusEnum("status").notNull().default("pending"),
-    mpPreapprovalId: text("mp_preapproval_id").unique(),
-    mpExternalRef: text("mp_external_ref").unique(),
-    currentPeriodStart: timestamp("current_period_start", { withTimezone: true }),
-    currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
-    trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
-    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
-    cancelReason: text("cancel_reason"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    index("idx_subscriptions_user_status").on(table.userId, table.status),
-    index("idx_subscriptions_mp_id").on(table.mpPreapprovalId),
-  ],
-);
-
-export const payments = ecommerceSchema.table(
-  "payments",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => accounts.id, { onDelete: "restrict" }),
-    orderId: uuid("order_id").references(() => orders.id, { onDelete: "restrict" }),
-    subscriptionId: uuid("subscription_id").references(() => subscriptions.id, {
-      onDelete: "restrict",
-    }),
-    paymentType: paymentTypeEnum("payment_type").notNull(),
-    status: paymentStatusEnum("status").notNull(),
-    amountCents: integer("amount_cents").notNull(),
-    currency: char("currency", { length: 3 }).notNull().default("ARS"),
-    mpPaymentId: text("mp_payment_id"),
-    mpRawWebhook: jsonb("mp_raw_webhook"),
-    processedAt: timestamp("processed_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("idx_payments_mp_id")
-      .on(table.mpPaymentId)
-      .where(sql`${table.mpPaymentId} IS NOT NULL`),
-  ],
+  (table) => [uniqueIndex("uq_coupons_code").on(table.code)],
 );
 
 export const contentAccess = ecommerceSchema.table(
@@ -206,10 +109,12 @@ export const contentAccess = ecommerceSchema.table(
     strapiContentType: text("strapi_content_type").notNull(),
     strapiDocumentId: text("strapi_document_id").notNull(),
     reason: accessReasonEnum("reason").notNull(),
-    orderId: uuid("order_id").references(() => orders.id, { onDelete: "cascade" }),
-    subscriptionId: uuid("subscription_id").references(() => subscriptions.id, {
-      onDelete: "cascade",
-    }),
+    // References payments.orders (hexagonal-payments-core's Order aggregate) —
+    // the legacy ecommerce.orders/subscriptions tables it used to point to were dropped.
+    orderId: uuid("order_id").references(() => paymentsOrders.id, { onDelete: "cascade" }),
+    // No FK: the legacy ecommerce.subscriptions table was dropped and this repo has no
+    // subscriptions concept yet. Column + enum value kept for forward compatibility.
+    subscriptionId: uuid("subscription_id"),
     validFrom: timestamp("valid_from", { withTimezone: true }).notNull().defaultNow(),
     validUntil: timestamp("valid_until", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),

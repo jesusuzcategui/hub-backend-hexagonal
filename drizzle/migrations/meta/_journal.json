@@ -65,5 +65,40 @@
       "tag": "0008_seed_mentoring",
       "breakpoints": true
     }
+    ,{
+      "idx": 9,
+      "version": "7",
+      "when": 1790611228055,
+      "tag": "0009_cart_coupons",
+      "breakpoints": true
+    }
+    ,{
+      "idx": 10,
+      "version": "7",
+      "when": 1790700000000,
+      "tag": "0010_payments_core",
+      "breakpoints": true
+    }
+    ,{
+      "idx": 11,
+      "version": "7",
+      "when": 1790710000000,
+      "tag": "0011_class_notes",
+      "breakpoints": true
+    }
+    ,{
+      "idx": 12,
+      "version": "7",
+      "when": 1790800000000,
+      "tag": "0012_blocked_slots",
+      "breakpoints": true
+    }
+    ,{
+      "idx": 13,
+      "version": "7",
+      "when": 1790900000000,
+      "tag": "0013_password_reset_tokens",
+      "breakpoints": true
+    }
   ]
 }

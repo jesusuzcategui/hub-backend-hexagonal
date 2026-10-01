@@ -5,6 +5,7 @@ import {
   getAvailableSlots,
   getStudentCredits,
   listStudentBookings,
+  rescheduleStudentBooking,
 } from "./schedule.service.js";
 
 export async function scheduleRoutes(fastify: FastifyInstance) {
@@ -72,6 +73,28 @@ export async function scheduleRoutes(fastify: FastifyInstance) {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Cancel failed";
         const code = msg.includes("not found") ? 404 : 400;
+        reply.code(code).send({ error: msg });
+      }
+    },
+  });
+
+  fastify.patch("/schedule/my/:id/reschedule", {
+    preHandler: [fastify.authenticate],
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { newSlotId } = req.body as { newSlotId?: string };
+      if (!newSlotId) return reply.code(400).send({ error: "newSlotId required" });
+
+      try {
+        const result = await rescheduleStudentBooking(fastify, {
+          bookingId: id,
+          studentId: req.user.sub as string,
+          newSlotId,
+        });
+        reply.send({ data: result });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Reschedule failed";
+        const code = msg.includes("not found") ? 404 : msg.includes("already booked") || msg.includes("blocked") ? 409 : 400;
         reply.code(code).send({ error: msg });
       }
     },

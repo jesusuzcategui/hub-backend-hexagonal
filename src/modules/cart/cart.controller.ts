@@ -1,47 +1,49 @@
 import { FastifyRequest, FastifyReply } from "fastify";
-import { addItemSchema } from "./cart.schemas";
-import { getCart, addCartItem, removeCartItem, clearCart } from "./cart.service";
+import { AppError } from "../../lib/errors";
+import { createCartSchema, updateCartSchema } from "./cart.schemas";
+import { createCart, getCartByToken, updateCartByToken, sendCartLinkEmail } from "./cart.service";
+
+export async function createCartController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const parsed = createCartSchema.safeParse(request.body ?? {});
+  if (!parsed.success) {
+    throw new AppError(400, "VALIDATION_ERROR", parsed.error.issues[0].message);
+  }
+
+  const cart = await createCart(request.server, parsed.data);
+  reply.status(201).send({ data: cart });
+}
 
 export async function getCartController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const items = await getCart(request.server, request.user.sub);
-  reply.send({ data: items });
+  const { token } = request.params as { token: string };
+  const cart = await getCartByToken(request.server, token);
+  reply.send({ data: cart });
 }
 
-export async function addItemController(
+export async function sendCartLinkController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const parsed = addItemSchema.safeParse(request.body);
+  const { token } = request.params as { token: string };
+  await sendCartLinkEmail(request.server, token);
+  reply.status(202).send({ data: { message: "Link sent" } });
+}
+
+export async function updateCartController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const { token } = request.params as { token: string };
+  const parsed = updateCartSchema.safeParse(request.body ?? {});
   if (!parsed.success) {
-    reply.status(400).send({ error: { code: "VALIDATION_ERROR", message: parsed.error.issues[0].message } });
-    return;
+    throw new AppError(400, "VALIDATION_ERROR", parsed.error.issues[0].message);
   }
 
-  const items = await addCartItem(
-    request.server,
-    request.user.sub,
-    parsed.data.productId,
-    parsed.data.quantity,
-  );
-  reply.send({ data: items });
-}
-
-export async function removeItemController(
-  request: FastifyRequest,
-  reply: FastifyReply,
-): Promise<void> {
-  const { productId } = request.params as { productId: string };
-  const items = await removeCartItem(request.server, request.user.sub, productId);
-  reply.send({ data: items });
-}
-
-export async function clearCartController(
-  request: FastifyRequest,
-  reply: FastifyReply,
-): Promise<void> {
-  await clearCart(request.server, request.user.sub);
-  reply.send({ data: [] });
+  const cart = await updateCartByToken(request.server, token, parsed.data);
+  reply.send({ data: cart });
 }

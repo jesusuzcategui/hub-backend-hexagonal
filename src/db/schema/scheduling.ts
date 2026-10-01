@@ -1,7 +1,18 @@
-import { boolean, index, pgSchema, smallint, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  jsonb,
+  pgSchema,
+  smallint,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { accounts } from "./users";
-import { orders, products } from "./ecommerce";
+import { products } from "./ecommerce";
+import { orders } from "./payments";
 
 export const schedulingSchema = pgSchema("scheduling");
 
@@ -109,6 +120,47 @@ export const bookings = schedulingSchema.table(
     index("idx_bookings_weekly_slot_id").on(table.weeklySlotId),
     index("idx_bookings_starts_at").on(table.startsAt),
     index("idx_bookings_status").on(table.status),
+  ],
+);
+
+// One note per booking (upsert on write), attachments stored on WebDAV — this table
+// only keeps pointers, same pattern as manual-transfer proofs in payments.service.ts.
+export const classNotes = schedulingSchema.table(
+  "class_notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    bookingId: uuid("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id").references(() => accounts.id, { onDelete: "set null" }),
+    content: text("content").notNull().default(""),
+    attachments: jsonb("attachments").notNull().default([]), // Array<{ filename: string; path: string; contentType: string }>
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("uq_class_notes_booking_id").on(table.bookingId)],
+);
+
+// A time range the teacher is unavailable (vacation, one-off block, etc).
+// Independent of weeklySlots.isActive: deactivating a weekly slot removes it
+// from the recurring pattern entirely, while a blocked_slot just closes a
+// specific window without touching the pattern — the slot reopens on its own
+// once the block's range is in the past.
+export const blockedSlots = schedulingSchema.table(
+  "blocked_slots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    teacherId: uuid("teacher_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_blocked_slots_teacher_id").on(table.teacherId),
+    index("idx_blocked_slots_starts_at").on(table.startsAt),
   ],
 );
 
