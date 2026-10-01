@@ -147,9 +147,10 @@ async function validateAndPriceCoupon(
 
 // --- Cart pricing -------------------------------------------------------------------
 //
-// A product's class-credit count is carried in `products.metadata.credits` (verified
-// against real seeded data in the local dev DB, e.g. {"credits": 4} for "Plan 4 Clases"
-// — NOT an assumption). Total credits granted = sum(credits * qty) across cart items.
+// A product's class-credit count is carried in `products.metadata.creditsCount` —
+// same key every other reader in this file (applySettlementSideEffects,
+// getOrderDetailForAdmin, listOrdersForStudent) already expects. Total
+// credits granted = sum(creditsCount * qty) across cart items.
 async function priceCartItems(
   fastify: FastifyInstance,
   items: Array<{ planId: string; qty: number; customAmountMinor?: number; customLabel?: string }>,
@@ -184,7 +185,7 @@ async function priceCartItems(
     const unitPrice = currency === "USD" ? product.priceUsd : product.priceCop;
     amountMinor += unitPrice * item.qty;
     const meta = product.metadata as Record<string, unknown> | null;
-    const perUnitCredits = typeof meta?.credits === "number" ? meta.credits : 1;
+    const perUnitCredits = typeof meta?.creditsCount === "number" ? meta.creditsCount : 1;
     creditsCount += perUnitCredits * item.qty;
     primaryProductId ??= item.planId;
   }
