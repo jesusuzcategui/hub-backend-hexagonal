@@ -42,6 +42,11 @@ const ALLOWED_ORIGINS = [
   "http://localhost:3402", // jesusuzcategui-campus (Nuxt) dev server
   ...(env.app.publicUrl ? [env.app.publicUrl] : []),
   ...(env.mentoring.portfolioOrigin ? [env.mentoring.portfolioOrigin] : []),
+  // Campus's own origin was never added here — it only ever worked in dev
+  // because localhost:3402 is hardcoded above. Any deploy (staging, prod)
+  // needs this or Campus can't log in cross-origin at all (CORS silently
+  // blocks the request, surfaces to the user as a generic fetch error).
+  ...(env.campus.origin ? [env.campus.origin] : []),
 ];
 
 export const buildApp = (): FastifyInstance => {
