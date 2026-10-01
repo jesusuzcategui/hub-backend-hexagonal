@@ -290,6 +290,18 @@ export async function checkout(fastify: FastifyInstance, input: CheckoutInput): 
           ? `${env.paypal.successUrl}/${order.id}`
           : undefined,
     confirmationUrl: input.paymentMethod === "epayco" ? env.epayco.confirmationUrl : undefined,
+    // Unlike returnUrl, PAYPAL_CANCEL_URL was a single static value with no
+    // per-order locale — a buyer checking out in English who cancelled
+    // still landed on the Spanish /pricing. Built here instead, from the
+    // same portfolio origin + the cart's own locale, with a query param
+    // /pricing reads to show a "sorry you cancelled" banner. Falls back to
+    // the static env var only if PORTFOLIO_ORIGIN is unset.
+    cancelUrl:
+      input.paymentMethod === "paypal"
+        ? env.mentoring.portfolioOrigin
+          ? `${env.mentoring.portfolioOrigin}${cart.locale === "en" ? "/en" : ""}/pricing?payment=cancelled`
+          : env.paypal.cancelUrl
+        : undefined,
   });
 
   const attemptWithRef = attempt.withProviderRef(checkoutResult.providerRef);

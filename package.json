@@ -31,7 +31,7 @@
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.8.5",
     "fastify-plugin": "^5.0.0",
-    "hexagonal-payments-core": "git+https://github.com/jesusuzcategui/hexagonal-payments-core.git#v0.1.1",
+    "hexagonal-payments-core": "git+https://github.com/jesusuzcategui/hexagonal-payments-core.git#v0.1.2",
     "ioredis": "^5.4.2",
     "jose": "^6.2.3",
     "node-cron": "^4.2.1",

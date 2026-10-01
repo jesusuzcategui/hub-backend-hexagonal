@@ -77,7 +77,7 @@ export class PaypalProvider implements WebhookPaymentProvider {
         ],
         applicationContext: {
           returnUrl: input.returnUrl ?? env.paypal.successUrl,
-          cancelUrl: env.paypal.cancelUrl,
+          cancelUrl: input.cancelUrl ?? env.paypal.cancelUrl,
         },
       },
     });
