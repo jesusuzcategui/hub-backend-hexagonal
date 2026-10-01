@@ -6,6 +6,7 @@ import {
   publicOrderStatusController,
   paypalCaptureController,
   myOrdersController,
+  paymentMethodsController,
 } from "./payments.controller";
 
 // Public, no-auth: checkout mirrors the cart module (buyers have no account yet), and
@@ -19,4 +20,5 @@ export async function paymentsRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get("/order/:id", publicOrderStatusController);
   fastify.post("/paypal/capture/:paypalOrderId", paypalCaptureController);
   fastify.get("/orders/my", { preHandler: [fastify.authenticate] }, myOrdersController);
+  fastify.get("/payment-methods", paymentMethodsController);
 }

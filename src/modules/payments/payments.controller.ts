@@ -8,6 +8,7 @@ import {
   getPublicOrderStatus,
   capturePaypalOrder,
   listOrdersForStudent,
+  listPaymentMethods,
   type PaymentMethod,
 } from "./payments.service";
 
@@ -113,6 +114,13 @@ export async function publicOrderStatusController(
 // GET /orders/my — authenticated, scoped to the caller's own orders.
 export async function myOrdersController(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const data = await listOrdersForStudent(request.server, request.user.sub as string);
+  reply.status(200).send({ data });
+}
+
+// GET /payment-methods — public, no auth. The storefront needs this before
+// checkout to know which buttons to show.
+export async function paymentMethodsController(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const data = await listPaymentMethods(request.server);
   reply.status(200).send({ data });
 }
 
