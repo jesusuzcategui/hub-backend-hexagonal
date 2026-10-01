@@ -12,11 +12,12 @@ import {
   products,
   refreshTokens,
   coupons,
+  paymentMethodSettings,
 } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import "../../plugins/caldav.js";
 import { adminRescheduleBooking, createStudentBooking, getAvailableSlots } from "../schedule/schedule.service.js";
-import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer, resolveOrderReview } from "../payments/payments.service.js";
+import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer, resolveOrderReview, listPaymentMethods, type PaymentMethod } from "../payments/payments.service.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import { createCart } from "../cart/cart.service.js";
 import { toDecimalMajor } from "../../adapters/payments/money.js";
@@ -146,6 +147,26 @@ export async function impersonateStudent(fastify: FastifyInstance, userId: strin
     throw new AppError(404, "STUDENT_NOT_FOUND", "Student not found");
   }
   return fastify.signAccessToken({ sub: account.id, role: account.role });
+}
+
+const VALID_PAYMENT_METHODS: PaymentMethod[] = ["epayco", "paypal", "manual_transfer"];
+
+export async function listPaymentMethodsForAdmin(fastify: FastifyInstance) {
+  return listPaymentMethods(fastify);
+}
+
+export async function setPaymentMethodEnabled(
+  fastify: FastifyInstance,
+  method: string,
+  enabled: boolean,
+): Promise<void> {
+  if (!(VALID_PAYMENT_METHODS as string[]).includes(method)) {
+    throw new AppError(400, "INVALID_METHOD", "Unknown payment method");
+  }
+  await fastify.drizzle
+    .insert(paymentMethodSettings)
+    .values({ method, enabled })
+    .onConflictDoUpdate({ target: paymentMethodSettings.method, set: { enabled, updatedAt: new Date() } });
 }
 
 export async function listBookings(fastify: FastifyInstance, status?: string) {

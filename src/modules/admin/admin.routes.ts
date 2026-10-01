@@ -24,6 +24,8 @@ import {
   grantCreditsToStudent,
   listStudentActiveCredits,
   impersonateStudent,
+  listPaymentMethodsForAdmin,
+  setPaymentMethodEnabled,
   adminBookForStudent,
   getAvailableSlots,
   listOrders,
@@ -234,6 +236,21 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
     const accessToken = await impersonateStudent(fastify, id);
     reply.send({ data: { accessToken } });
+  });
+
+  // Payment methods
+  fastify.get("/admin/payment-methods", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
+    reply.send({ data: await listPaymentMethodsForAdmin(fastify) });
+  });
+
+  fastify.patch("/admin/payment-methods/:method", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { method } = req.params as { method: string };
+    const { enabled } = (req.body ?? {}) as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      throw new AppError(400, "MISSING_FIELDS", "enabled (boolean) is required");
+    }
+    await setPaymentMethodEnabled(fastify, method, enabled);
+    reply.send({ data: { method, enabled } });
   });
 
   // Credits

@@ -99,6 +99,17 @@ export const coupons = ecommerceSchema.table(
   (table) => [uniqueIndex("uq_coupons_code").on(table.code)],
 );
 
+// One row per payment method ("epayco" | "paypal" | "manual_transfer"),
+// seeded enabled=true by the migration. Lets an admin kill a method at
+// runtime (a provider having a bad day) without a deploy — checkout()
+// checks this before creating an attempt, so it's a real gate, not just a
+// hidden button on the storefront.
+export const paymentMethodSettings = ecommerceSchema.table("payment_method_settings", {
+  method: text("method").primaryKey(),
+  enabled: boolean("enabled").notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const contentAccess = ecommerceSchema.table(
   "content_access",
   {

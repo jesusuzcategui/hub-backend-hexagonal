@@ -14,7 +14,7 @@ import {
   type Order,
   type WebhookHeaders,
 } from "hexagonal-payments-core";
-import { accounts, carts, coupons, products, passwordResetTokens } from "../../db/schema";
+import { accounts, carts, coupons, products, passwordResetTokens, paymentMethodSettings } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { env } from "../../config/env";
 import { grantCreditsToStudent } from "../admin/admin.service";
@@ -220,6 +220,16 @@ export async function checkout(fastify: FastifyInstance, input: CheckoutInput): 
   if (!cart) throw new AppError(404, "CART_NOT_FOUND", "Cart not found");
   if (cart.status !== "open") throw new AppError(409, "CART_NOT_OPEN", "Cart is not open");
   if (!cart.buyerEmail) throw new AppError(400, "MISSING_BUYER_EMAIL", "Cart has no buyer email");
+
+  // Real gate, not just a hidden button on the storefront — an admin can
+  // disable a method at runtime (a provider having a bad day) and this is
+  // what actually stops a checkout call made directly against the API.
+  const methodSetting = await db.query.paymentMethodSettings.findFirst({
+    where: eq(paymentMethodSettings.method, input.paymentMethod),
+  });
+  if (methodSetting && !methodSetting.enabled) {
+    throw new AppError(409, "PAYMENT_METHOD_DISABLED", "This payment method is temporarily unavailable");
+  }
 
   const currency = (cart.currency ?? "COP").toUpperCase();
   const items = (cart.items as Array<{ planId: string; qty: number; customAmountMinor?: number; customLabel?: string }>) ?? [];
@@ -797,6 +807,21 @@ export async function handlePaypalWebhook(
   );
   await handleSettlementResult(fastify, result);
   return result;
+}
+
+// --- Payment methods (public read) --------------------------------------------------------
+
+const ALL_PAYMENT_METHODS: PaymentMethod[] = ["epayco", "paypal", "manual_transfer"];
+
+// Public, no-auth — the storefront needs this to know which buttons to show.
+// Missing rows (shouldn't happen post-migration, but just in case) default
+// to enabled, same as the checkout() guard's fail-open-if-unknown stance.
+export async function listPaymentMethods(fastify: FastifyInstance): Promise<Record<PaymentMethod, boolean>> {
+  const rows = await fastify.drizzle.query.paymentMethodSettings.findMany();
+  const byMethod = new Map(rows.map((r) => [r.method, r.enabled]));
+  return Object.fromEntries(
+    ALL_PAYMENT_METHODS.map((m) => [m, byMethod.get(m) ?? true]),
+  ) as Record<PaymentMethod, boolean>;
 }
 
 // --- Student: own order history ---------------------------------------------------------
