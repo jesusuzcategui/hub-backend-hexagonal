@@ -449,7 +449,7 @@ export async function createStudentBooking(
       uid: bookingId!,
       startsAt: startsAt!,
       endsAt: endsAt!,
-      summary: `Clase — ${product?.name ?? "English"}`,
+      summary: `Clase — ${product?.name ?? "English"} · ${student[0].displayName}`,
       description: meetLink ?? undefined,
       location: meetLink ?? undefined,
       attendeeEmail: student[0].email,

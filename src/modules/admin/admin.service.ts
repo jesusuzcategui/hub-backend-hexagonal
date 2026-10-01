@@ -131,6 +131,23 @@ export async function getStudent(fastify: FastifyInstance, userId: string) {
   };
 }
 
+// Admin-only "log in as this student" for testing — short-lived access
+// token only (same expiry as a normal login), no refresh cookie. Minting a
+// refresh cookie here would overwrite the admin's own session cookie in
+// their browser, logging them out of their own account; the access token
+// alone is enough to drive the student UI for a quick test, and expiring
+// normally (no silent refresh) is the right failure mode for this.
+export async function impersonateStudent(fastify: FastifyInstance, userId: string): Promise<string> {
+  const account = await fastify.drizzle.query.accounts.findFirst({
+    where: and(eq(accounts.id, userId), eq(accounts.isActive, true)),
+    columns: { id: true, role: true },
+  });
+  if (!account || account.role === "admin") {
+    throw new AppError(404, "STUDENT_NOT_FOUND", "Student not found");
+  }
+  return fastify.signAccessToken({ sub: account.id, role: account.role });
+}
+
 export async function listBookings(fastify: FastifyInstance, status?: string) {
   const db = fastify.drizzle;
 
