@@ -226,6 +226,8 @@ export async function getStudentCredits(fastify: FastifyInstance, userId: string
     creditId: r.creditId,
     productId: r.productId,
     productName: r.productName,
+    totalCredits: r.totalCredits,
+    usedCredits: r.usedCredits,
     remaining: r.totalCredits - r.usedCredits,
     expiresAt: r.expiresAt,
   }));

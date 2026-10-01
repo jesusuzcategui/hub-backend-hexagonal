@@ -1,7 +1,7 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 import { AppError } from "../../lib/errors";
 import { createCartSchema, updateCartSchema } from "./cart.schemas";
-import { createCart, getCartByToken, updateCartByToken } from "./cart.service";
+import { createCart, getCartByToken, updateCartByToken, sendCartLinkEmail } from "./cart.service";
 
 export async function createCartController(
   request: FastifyRequest,
@@ -23,6 +23,15 @@ export async function getCartController(
   const { token } = request.params as { token: string };
   const cart = await getCartByToken(request.server, token);
   reply.send({ data: cart });
+}
+
+export async function sendCartLinkController(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  const { token } = request.params as { token: string };
+  await sendCartLinkEmail(request.server, token);
+  reply.status(202).send({ data: { message: "Link sent" } });
 }
 
 export async function updateCartController(

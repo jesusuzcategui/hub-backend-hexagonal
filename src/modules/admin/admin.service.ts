@@ -16,7 +16,7 @@ import {
 import { AppError } from "../../lib/errors";
 import "../../plugins/caldav.js";
 import { adminRescheduleBooking, createStudentBooking, getAvailableSlots } from "../schedule/schedule.service.js";
-import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer } from "../payments/payments.service.js";
+import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer, resolveOrderReview } from "../payments/payments.service.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import { createCart } from "../cart/cart.service.js";
 import { toDecimalMajor } from "../../adapters/payments/money.js";
@@ -160,6 +160,37 @@ export async function listBookings(fastify: FastifyInstance, status?: string) {
   }
 
   return baseQuery;
+}
+
+// Classes actually given — distinct from listBookings (which shows every
+// status for the calendar view): this is "completed" only, with
+// student/package filters, for the Reportes page.
+export async function listClassesGiven(
+  fastify: FastifyInstance,
+  filters: { studentId?: string; productId?: string },
+) {
+  const db = fastify.drizzle;
+
+  const conditions = [eq(bookings.status, "completed")];
+  if (filters.studentId) conditions.push(eq(bookings.studentId, filters.studentId));
+  if (filters.productId) conditions.push(eq(bookings.productId, filters.productId));
+
+  return db
+    .select({
+      id: bookings.id,
+      startsAt: bookings.startsAt,
+      endsAt: bookings.endsAt,
+      studentId: accounts.id,
+      studentName: accounts.displayName,
+      studentEmail: accounts.email,
+      productId: products.id,
+      productName: products.name,
+    })
+    .from(bookings)
+    .leftJoin(accounts, eq(accounts.id, bookings.studentId))
+    .leftJoin(products, eq(products.id, bookings.productId))
+    .where(and(...conditions))
+    .orderBy(desc(bookings.startsAt));
 }
 
 export async function cancelBooking(
@@ -737,6 +768,10 @@ export async function validateTransfer(
   decision: "approve" | "reject",
 ) {
   return validateManualTransfer(fastify, orderId, decision);
+}
+
+export async function resolveReview(fastify: FastifyInstance, orderId: string) {
+  return resolveOrderReview(fastify, orderId);
 }
 
 export async function getOrderDetail(fastify: FastifyInstance, orderId: string) {

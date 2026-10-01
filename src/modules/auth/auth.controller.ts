@@ -135,5 +135,16 @@ export async function meController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  reply.status(200).send({ data: { userId: request.user.sub, role: request.user.role } });
+  const account = await request.server.drizzle.query.accounts.findFirst({
+    where: (a, { eq }) => eq(a.id, request.user.sub),
+    columns: { displayName: true, email: true },
+  });
+  reply.status(200).send({
+    data: {
+      userId: request.user.sub,
+      role: request.user.role,
+      displayName: account?.displayName ?? null,
+      email: account?.email ?? null,
+    },
+  });
 }

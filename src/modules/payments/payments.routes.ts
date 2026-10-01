@@ -5,6 +5,7 @@ import {
   paypalWebhookController,
   publicOrderStatusController,
   paypalCaptureController,
+  myOrdersController,
 } from "./payments.controller";
 
 // Public, no-auth: checkout mirrors the cart module (buyers have no account yet), and
@@ -17,4 +18,5 @@ export async function paymentsRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post("/webhooks/paypal", paypalWebhookController);
   fastify.get("/order/:id", publicOrderStatusController);
   fastify.post("/paypal/capture/:paypalOrderId", paypalCaptureController);
+  fastify.get("/orders/my", { preHandler: [fastify.authenticate] }, myOrdersController);
 }

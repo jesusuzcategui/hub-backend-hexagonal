@@ -7,6 +7,7 @@ import {
   handlePaypalWebhook,
   getPublicOrderStatus,
   capturePaypalOrder,
+  listOrdersForStudent,
   type PaymentMethod,
 } from "./payments.service";
 
@@ -106,6 +107,12 @@ export async function publicOrderStatusController(
 ): Promise<void> {
   const { id } = request.params as { id: string };
   const data = await getPublicOrderStatus(request.server, id);
+  reply.status(200).send({ data });
+}
+
+// GET /orders/my — authenticated, scoped to the caller's own orders.
+export async function myOrdersController(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const data = await listOrdersForStudent(request.server, request.user.sub as string);
   reply.status(200).send({ data });
 }
 

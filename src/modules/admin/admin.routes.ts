@@ -9,6 +9,7 @@ import {
   unblockStudent,
   deleteStudent,
   listBookings,
+  listClassesGiven,
   cancelBooking,
   markAttendance,
   listAvailabilities,
@@ -26,6 +27,7 @@ import {
   getAvailableSlots,
   listOrders,
   validateTransfer,
+  resolveReview,
   getOrderDetail,
   getOrderProof,
   listCoupons,
@@ -115,6 +117,12 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get("/admin/bookings", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
     const { status } = req.query as { status?: string };
     reply.send({ data: await listBookings(fastify, status) });
+  });
+
+  // Reports
+  fastify.get("/admin/reports/classes", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { studentId, productId } = req.query as { studentId?: string; productId?: string };
+    reply.send({ data: await listClassesGiven(fastify, { studentId, productId }) });
   });
 
   fastify.patch("/admin/bookings/:id/cancel", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
@@ -286,6 +294,16 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       }
       const result = await validateTransfer(fastify, id, decision);
       reply.send({ data: { outcome: result.outcome } });
+    },
+  );
+
+  fastify.post(
+    "/admin/orders/:id/resolve-review",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      await resolveReview(fastify, id);
+      reply.send({ data: { outcome: "resolved" } });
     },
   );
 

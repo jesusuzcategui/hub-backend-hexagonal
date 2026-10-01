@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomBytes, createHash } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { FastifyInstance } from "fastify";
 import {
@@ -13,7 +14,7 @@ import {
   type Order,
   type WebhookHeaders,
 } from "hexagonal-payments-core";
-import { accounts, carts, coupons, products } from "../../db/schema";
+import { accounts, carts, coupons, products, passwordResetTokens } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { env } from "../../config/env";
 import { grantCreditsToStudent } from "../admin/admin.service";
@@ -26,7 +27,7 @@ import { PaypalProvider } from "../../adapters/payments/paypal-provider";
 import { ManualTransferProvider } from "../../adapters/payments/manual-transfer-provider";
 import { getOrderKindRegistry, CLASS_CREDIT_PLAN_KIND, CLASS_CREDIT_PLAN_VERSION } from "./kind-registry";
 import { epaycoStatusMapper, paypalStatusMapper, manualTransferStatusMapper } from "./provider-status-mappers";
-import { renderEmailHtml } from "../../lib/email-template";
+import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template";
 
 export type PaymentMethod = "epayco" | "paypal" | "manual_transfer";
 
@@ -461,7 +462,7 @@ async function applySettlementSideEffects(
 
   const account = await fastify.drizzle.query.accounts.findFirst({
     where: eq(accounts.id, row.userId),
-    columns: { id: true, email: true, displayName: true },
+    columns: { id: true, email: true, displayName: true, passwordHash: true },
   });
   if (!account) return;
 
@@ -513,6 +514,19 @@ async function applySettlementSideEffects(
       if (fresh && isLegalFulfillmentTransition(fresh.fulfillmentStatus, target)) {
         await orderRepo.save(fresh.transitionFulfillment(target, clock.now()));
       }
+      if (target === "needs_review") {
+        const reason = options?.forceNeedsReview
+          ? "ePayco no pudo confirmar la transacción server-to-server (endpoint de contraste caído) — el pago igual se marcó pagado y los créditos ya fueron otorgados."
+          : "El otorgamiento de créditos o acceso falló al momento de liquidar el pago.";
+        await notifyAdminsOfReviewNeeded(fastify, {
+          orderId: order.id,
+          buyerName: account.displayName,
+          buyerEmail: account.email,
+          amountMinor: order.amountMinor,
+          currency: order.currency,
+          reason,
+        });
+      }
     } catch (err) {
       fastify.log.error({ err, orderId: order.id }, "Failed to update fulfillment status after settlement");
     }
@@ -528,10 +542,44 @@ async function applySettlementSideEffects(
     // too costs nothing and removes any doubt.
     const safeName = escapeHtml(account.displayName);
     const safeOrderId = escapeHtml(order.id);
+
+    // findOrCreateAccountByEmail creates a buyer's account with
+    // passwordHash: null — there is no signup step, so without this link
+    // a first-time buyer has no way in. Same token mechanism as
+    // /auth/reset-password (single-use, 1h), it's just the first password
+    // instead of a replacement one.
+    // Custom (product-less) orders never get this — same reasoning as the
+    // thank-you page's success copy: a "cuenta de cobro" payer isn't a
+    // student and shouldn't be steered toward creating a Campus account.
+    let setPasswordHtml = "";
+    if (!account.passwordHash && metadata?.productId) {
+      try {
+        const raw = randomBytes(32).toString("hex");
+        const tokenHash = createHash("sha256").update(raw).digest("hex");
+        await fastify.drizzle.insert(passwordResetTokens).values({
+          userId: account.id,
+          tokenHash,
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        });
+        const origin = (env.campus.origin ?? "https://campus.jesusuzcategui.com").replace(/\/+$/, "");
+        const setPasswordUrl = escapeHtml(`${origin}/reset-password?token=${raw}`);
+        const buttonLabel = locale === "en" ? "Set your password" : "Crear tu contraseña";
+        const helper = locale === "en"
+          ? "One more step: set a password to access your account and manage your bookings."
+          : "Un paso más: creá tu contraseña para acceder a tu cuenta y gestionar tus clases.";
+        setPasswordHtml = `
+          <p>${helper}</p>
+          <p style="margin:24px 0;"><a href="${setPasswordUrl}" style="display:inline-block; background-color:${BRAND_COLOR}; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:8px; font-weight:600;">${buttonLabel}</a></p>
+        `;
+      } catch (err) {
+        fastify.log.error({ err, orderId: order.id }, "Failed to create set-password link for settlement email");
+      }
+    }
+
     const body =
       locale === "en"
-        ? `<p>Hi ${safeName},</p><p>Your payment for order <strong>${safeOrderId}</strong> has been confirmed. Your class credits are ready.</p>`
-        : `<p>Hola ${safeName},</p><p>Tu pago para la orden <strong>${safeOrderId}</strong> ha sido confirmado. Tus créditos de clase ya están disponibles.</p>`;
+        ? `<p>Hi ${safeName},</p><p>Your payment for order <strong>${safeOrderId}</strong> has been confirmed. Your class credits are ready.</p>${setPasswordHtml}`
+        : `<p>Hola ${safeName},</p><p>Tu pago para la orden <strong>${safeOrderId}</strong> ha sido confirmado. Tus créditos de clase ya están disponibles.</p>${setPasswordHtml}`;
 
     await fastify.mailer.sendMail({
       from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
@@ -575,6 +623,59 @@ async function applySettlementSideEffects(
     } catch (err) {
       fastify.log.error({ err, orderId: order.id }, "Failed to increment coupon redemption on settlement");
     }
+  }
+}
+
+/**
+ * Alerts admins the moment an order lands in needs_review — without this,
+ * the only way to notice a stuck order was to stumble onto it in the orders
+ * list. Mirrors schedule.service.ts's notifyAdminsOfBooking: fixed inbox
+ * (env.campus.adminNotificationEmail) takes priority, falls back to every
+ * active admin account.
+ */
+async function notifyAdminsOfReviewNeeded(
+  fastify: FastifyInstance,
+  info: { orderId: string; buyerName: string; buyerEmail: string; amountMinor: number; currency: string; reason: string },
+): Promise<void> {
+  try {
+    let recipients: string[];
+    if (env.campus.adminNotificationEmail) {
+      recipients = [env.campus.adminNotificationEmail];
+    } else {
+      const admins = await fastify.drizzle
+        .select({ email: accounts.email })
+        .from(accounts)
+        .where(and(eq(accounts.role, "admin"), eq(accounts.isActive, true)));
+      recipients = admins.map((a) => a.email);
+    }
+    if (recipients.length === 0) return;
+
+    const currency = info.currency.toUpperCase();
+    const amount = currency === "COP" ? info.amountMinor : info.amountMinor / 100;
+    const safeName = escapeHtml(info.buyerName);
+    const safeEmail = escapeHtml(info.buyerEmail);
+    const safeReason = escapeHtml(info.reason);
+    const origin = (env.campus.origin ?? "https://campus.jesusuzcategui.com").replace(/\/+$/, "");
+    const ordersUrl = escapeHtml(`${origin}/admin/orders`);
+
+    await fastify.mailer.sendMail({
+      from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
+      to: recipients.join(","),
+      subject: `⚠️ Orden pendiente de revisión — ${safeName}`,
+      html: renderEmailHtml({
+        title: "Orden pendiente de revisión",
+        bodyHtml: `
+          <p>Una orden pagada quedó marcada como <strong>needs_review</strong> y necesita que la revises manualmente.</p>
+          <p><strong>Comprador:</strong> ${safeName} (${safeEmail})</p>
+          <p><strong>Monto:</strong> ${amount.toLocaleString("es-CO")} ${currency}</p>
+          <p><strong>Motivo:</strong> ${safeReason}</p>
+          <p><strong>Orden:</strong> ${escapeHtml(info.orderId)}</p>
+          <p style="margin:24px 0;"><a href="${ordersUrl}" style="display:inline-block; background-color:${BRAND_COLOR}; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:8px; font-weight:600;">Ver en el panel</a></p>
+        `,
+      }),
+    });
+  } catch (err) {
+    fastify.log.error({ err, orderId: info.orderId }, "Failed to send needs_review admin notification email");
   }
 }
 
@@ -683,6 +784,67 @@ export async function handlePaypalWebhook(
   );
   await handleSettlementResult(fastify, result);
   return result;
+}
+
+// --- Student: own order history ---------------------------------------------------------
+
+export async function listOrdersForStudent(fastify: FastifyInstance, userId: string) {
+  const { orders: ordersTable } = await import("../../db/schema");
+
+  const rows = await fastify.drizzle
+    .select({
+      id: ordersTable.id,
+      amountMinor: ordersTable.amountMinor,
+      currency: ordersTable.currency,
+      status: ordersTable.status,
+      fulfillmentStatus: ordersTable.fulfillmentStatus,
+      paidAt: ordersTable.paidAt,
+      createdAt: ordersTable.createdAt,
+      metadata: ordersTable.metadata,
+    })
+    .from(ordersTable)
+    .where(eq(ordersTable.userId, userId))
+    .orderBy(desc(ordersTable.createdAt))
+    .limit(200);
+
+  // metadata.productId isn't joinable in SQL (it's inside a jsonb blob), so
+  // batch-resolve names in one extra query instead of one per row — a
+  // student's own order count is small, but there's no reason to N+1 it.
+  const productIds = [
+    ...new Set(
+      rows
+        .map((r) => (r.metadata as { productId?: string } | null)?.productId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const productNames = productIds.length
+    ? await fastify.drizzle
+        .select({ id: products.id, name: products.name })
+        .from(products)
+        .where(inArray(products.id, productIds))
+    : [];
+  const nameById = new Map(productNames.map((p) => [p.id, p.name]));
+
+  return rows.map((r) => {
+    const metadata = r.metadata as {
+      productId?: string;
+      creditsCount?: number;
+      couponCode?: string | null;
+      items?: Array<{ customLabel?: string }>;
+    } | null;
+    return {
+      id: r.id,
+      amountMinor: r.amountMinor,
+      currency: r.currency,
+      status: r.status,
+      fulfillmentStatus: r.fulfillmentStatus,
+      paidAt: r.paidAt,
+      createdAt: r.createdAt,
+      productName: (metadata?.productId ? nameById.get(metadata.productId) : undefined) ?? metadata?.items?.[0]?.customLabel ?? null,
+      creditsCount: metadata?.creditsCount ?? null,
+      couponCode: metadata?.couponCode ?? null,
+    };
+  });
 }
 
 // --- Admin: orders list + manual-transfer validation -----------------------------------
@@ -799,6 +961,30 @@ export async function getManualTransferProof(fastify: FastifyInstance, orderId: 
     contentType: contentType ?? "application/octet-stream",
     inline: Boolean(contentType),
   };
+}
+
+/**
+ * Clears fulfillment_status: "needs_review" back to "delivered" for an
+ * order whose payment is already confirmed (status: "paid") — used when an
+ * admin manually double-checked a payment the automated path couldn't
+ * verify on its own (e.g. ePayco's contraste/reconciliation endpoint was
+ * unavailable, see handleEpaycoWebhook's forceNeedsReview). Credits and
+ * content access were already granted at settlement time regardless of
+ * this flag — this only clears the manual-review marker, it does not
+ * re-run any grant.
+ */
+export async function resolveOrderReview(fastify: FastifyInstance, orderId: string): Promise<void> {
+  const orderRepo = new DrizzleOrderRepository(fastify.drizzle);
+  const order = await orderRepo.findById(orderId);
+  if (!order) throw new AppError(404, "ORDER_NOT_FOUND", "Order not found");
+  if (order.status !== "paid") {
+    throw new AppError(409, "ORDER_NOT_PAID", "Order is not paid yet");
+  }
+  if (order.fulfillmentStatus !== "needs_review") {
+    throw new AppError(409, "NOT_NEEDS_REVIEW", "Order is not pending manual review");
+  }
+
+  await orderRepo.save(order.transitionFulfillment("delivered", clock.now()));
 }
 
 export async function validateManualTransfer(
