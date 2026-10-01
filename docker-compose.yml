@@ -3,6 +3,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Compose does NOT forward project/host env vars into Dockerfile ARGs
+      # automatically — without this, GH_TOKEN reaches the Dockerfile empty
+      # and the private hexagonal-payments-core install fails even if
+      # Coolify has GH_TOKEN set.
+      args:
+        GH_TOKEN: "${GH_TOKEN:?GH_TOKEN is required to install hexagonal-payments-core}"
     ports:
       - "${HUB_PORT:-3000}:3000"
     environment:
@@ -17,6 +23,19 @@ services:
       COOKIE_SECURE: "${COOKIE_SECURE:-true}"
       COOKIE_DOMAIN: "${COOKIE_DOMAIN:-}"
       APP_PUBLIC_URL: "${APP_PUBLIC_URL:-}"
+      CAMPUS_ORIGIN: "${CAMPUS_ORIGIN:-}"
+      ADMIN_NOTIFICATION_EMAIL: "${ADMIN_NOTIFICATION_EMAIL:-}"
+      ADMIN_EMAIL: "${ADMIN_EMAIL:-}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      EPAYCO_CUST_ID_CLIENTE: "${EPAYCO_CUST_ID_CLIENTE:-}"
+      EPAYCO_P_KEY: "${EPAYCO_P_KEY:-}"
+      EPAYCO_PUBLIC_KEY: "${EPAYCO_PUBLIC_KEY:-}"
+      EPAYCO_PRIVATE_KEY: "${EPAYCO_PRIVATE_KEY:-}"
+      EPAYCO_VALIDATION_BASE_URL: "${EPAYCO_VALIDATION_BASE_URL:-https://api.epayco.co}"
+      EPAYCO_SUCCESS_URL: "${EPAYCO_SUCCESS_URL:-}"
+      EPAYCO_FAILURE_URL: "${EPAYCO_FAILURE_URL:-}"
+      EPAYCO_PENDING_URL: "${EPAYCO_PENDING_URL:-}"
+      EPAYCO_CONFIRMATION_URL: "${EPAYCO_CONFIRMATION_URL:-}"
       MP_ACCESS_TOKEN: "${MP_ACCESS_TOKEN:-}"
       MP_WEBHOOK_SECRET: "${MP_WEBHOOK_SECRET:-}"
       MP_SUCCESS_URL: "${MP_SUCCESS_URL:-}"
@@ -50,6 +69,13 @@ services:
       GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID:-}"
       GITHUB_CLIENT_SECRET: "${GITHUB_CLIENT_SECRET:-}"
       GITHUB_CALLBACK_URL: "${GITHUB_CALLBACK_URL:-}"
+      CAP_SITE_KEY: "${CAP_SITE_KEY:-}"
+      CAP_PRIVATE_KEY: "${CAP_PRIVATE_KEY:-}"
+      WEBDAV_URL: "${WEBDAV_URL:-}"
+      WEBDAV_USERNAME: "${WEBDAV_USERNAME:-}"
+      WEBDAV_PASSWORD: "${WEBDAV_PASSWORD:-}"
+      UMAMI_URL: "${UMAMI_URL:-}"
+      UMAMI_WEBSITE_ID: "${UMAMI_WEBSITE_ID:-}"
     depends_on:
       postgres:
         condition: service_healthy
