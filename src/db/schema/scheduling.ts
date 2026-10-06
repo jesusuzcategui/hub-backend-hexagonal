@@ -187,11 +187,22 @@ export const blockedSlots = schedulingSchema.table(
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
     endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
     reason: text("reason"),
+    // 'manual' = created through the admin API; 'caldav' = mirrored from the owner's Nextcloud calendar by the sync
+    // (reason is the constant 'nextcloud'). The sync only ever touches 'caldav' rows.
+    source: text("source").notNull().default("manual"),
+    // Stable id of one calendar event instance: "<UID>|<recurrence instance start>". Only set for caldav rows.
+    externalKey: text("external_key"),
+    // Event title from the calendar. ADMIN-ONLY: never return it on a student or public endpoint, never log it.
+    externalSummary: text("external_summary"),
+    syncedAt: timestamp("synced_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("idx_blocked_slots_teacher_id").on(table.teacherId),
     index("idx_blocked_slots_starts_at").on(table.startsAt),
+    uniqueIndex("uq_blocked_slots_caldav_key")
+      .on(table.source, table.externalKey)
+      .where(sql`${table.source} = 'caldav'`),
   ],
 );
 

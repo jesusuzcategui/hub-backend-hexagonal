@@ -10,13 +10,13 @@ const journal = JSON.parse(readFileSync(join(root, "meta", "_journal.json"), "ut
 
 describe("migration 0018_order_review_reason", () => {
   it("is registered right after 0017 with a strictly greater `when`", () => {
-    const last = journal.entries[journal.entries.length - 1];
-    expect(last.tag).toBe("0018_order_review_reason");
+    const last = journal.entries.find((e: { tag: string }) => e.tag === "0018_order_review_reason");
+    expect(last).toBeDefined();
     expect(last.idx).toBe(18);
-    const prev = journal.entries[journal.entries.length - 2];
+    const prev = journal.entries.find((e: { idx: number }) => e.idx === 17);
     expect(prev.tag).toBe("0017_booking_series");
     expect(last.when).toBeGreaterThan(1791417600000);
-    const maxOther = Math.max(...journal.entries.slice(0, -1).map((e: { when: number }) => e.when));
+    const maxOther = Math.max(...journal.entries.filter((e: { idx: number }) => e.idx < 18).map((e: { when: number }) => e.when));
     expect(last.when).toBeGreaterThan(maxOther);
   });
 
