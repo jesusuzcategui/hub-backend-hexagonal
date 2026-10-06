@@ -20,6 +20,7 @@ import { adminRescheduleBooking, createStudentBooking, getAvailableSlots } from 
 import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer, resolveOrderReview, listPaymentMethods, type PaymentMethod } from "../payments/payments.service.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import { createCart } from "../cart/cart.service.js";
+import { toActiveCreditDto } from "./active-credits.js";
 import { toDecimalMajor } from "../../adapters/payments/money.js";
 
 const ARGON2_OPTIONS: argon2.Options = {
@@ -710,12 +711,7 @@ export async function listStudentActiveCredits(fastify: FastifyInstance, userId:
     )
     .orderBy(asc(classCredits.expiresAt));
 
-  return rows.map((r) => ({
-    creditId: r.creditId,
-    productName: r.productName,
-    remaining: r.totalCredits - r.usedCredits,
-    expiresAt: r.expiresAt,
-  }));
+  return rows.map(toActiveCreditDto);
 }
 
 export async function adminBookForStudent(
