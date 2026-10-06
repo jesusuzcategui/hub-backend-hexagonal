@@ -17,6 +17,7 @@ import {
 import { AppError } from "../../lib/errors";
 import "../../plugins/caldav.js";
 import { adminRescheduleBooking, createStudentBooking, getAvailableSlots, getStudentCredits } from "../schedule/schedule.service.js";
+import { buildBookingCancelledEmail, buildWeeklySlotChangeEmail } from "../schedule/student-emails.js";
 import { resolveGrantExpiry } from "../schedule/credit-balance.js";
 import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer, resolveOrderReview, listPaymentMethods, type PaymentMethod } from "../payments/payments.service.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
@@ -284,31 +285,24 @@ export async function cancelBooking(
   // Send cancellation email to student
   try {
     const [student] = await fastify.drizzle
-      .select({ email: accounts.email, displayName: accounts.displayName })
+      .select({ email: accounts.email, displayName: accounts.displayName, locale: accounts.locale })
       .from(accounts)
       .where(eq(accounts.id, booking.studentId!))
       .limit(1);
 
     if (student) {
-      const bogotaDate = new Intl.DateTimeFormat("es-CO", {
-        timeZone: "America/Bogota",
-        dateStyle: "full",
-        timeStyle: "short",
-      }).format(booking.startsAt!);
+      const cancelled = buildBookingCancelledEmail({
+        locale: student.locale,
+        studentName: student.displayName,
+        startsAt: booking.startsAt!,
+        reason,
+      });
 
       await fastify.mailer.sendMail({
         from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
         to: student.email,
-        subject: "❌ Clase cancelada",
-        html: renderEmailHtml({
-          title: "Clase cancelada",
-          bodyHtml: `
-            <p>Hola ${escapeHtml(student.displayName)},</p>
-            <p>Tu clase del <strong>${bogotaDate} (Colombia)</strong> ha sido cancelada.</p>
-            ${reason ? `<p><strong>Motivo:</strong> ${escapeHtml(reason)}</p>` : ""}
-            <p>Tu crédito ha sido reintegrado. Puedes agendar una nueva clase cuando gustes.</p>
-          `,
-        }),
+        subject: cancelled.subject,
+        html: cancelled.html,
       });
     }
   } catch (err) {
@@ -503,6 +497,7 @@ export async function deactivateWeeklySlot(fastify: FastifyInstance, id: string)
       startsAt: bookings.startsAt,
       studentEmail: accounts.email,
       studentName: accounts.displayName,
+      studentLocale: accounts.locale,
     })
     .from(bookings)
     .innerJoin(accounts, eq(accounts.id, bookings.studentId))
@@ -518,25 +513,17 @@ export async function deactivateWeeklySlot(fastify: FastifyInstance, id: string)
 
   for (const booking of affectedBookings) {
     try {
-      const bogotaDate = new Intl.DateTimeFormat("es-CO", {
-        timeZone: "America/Bogota",
-        dateStyle: "full",
-        timeStyle: "short",
-      }).format(booking.startsAt);
+      const change = buildWeeklySlotChangeEmail({
+        locale: booking.studentLocale,
+        studentName: booking.studentName,
+        startsAt: booking.startsAt,
+      });
 
       await fastify.mailer.sendMail({
         from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
         to: booking.studentEmail,
-        subject: "📅 Cambio en el horario recurrente de tus asesorías",
-        html: renderEmailHtml({
-          title: "Cambio en tu horario recurrente",
-          bodyHtml: `
-            <p>Hola ${escapeHtml(booking.studentName)},</p>
-            <p>Tu clase agendada para el <strong>${bogotaDate} (Colombia)</strong> se mantiene sin cambios, no ha sido cancelada.</p>
-            <p>Sin embargo, este horario recurrente semanal dejará de ofrecerse a partir de ahora, por lo que no podrás volver a agendar automáticamente en este mismo horario en el futuro.</p>
-            <p>Si deseas continuar con tus asesorías, podrás elegir otro horario disponible cuando lo necesites.</p>
-          `,
-        }),
+        subject: change.subject,
+        html: change.html,
       });
       notifiedBookings += 1;
     } catch (err) {

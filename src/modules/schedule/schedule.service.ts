@@ -7,6 +7,7 @@ import { availabilities, blockedSlots, bookings, classCredits, weeklySlots } fro
 import { escapeHtml } from "../payments/payments.service.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import { AppError } from "../../lib/errors.js";
+import { buildBookingConfirmedEmail } from "./student-emails.js";
 import { isUsableBlock, pickCreditBlock, summarizeBalance, type BalanceSummary } from "./credit-balance.js";
 import "../../plugins/caldav.js";
 
@@ -249,7 +250,7 @@ export async function createStudentBooking(
   const { studentId, slotId, creditId, notes, consumeCredit = true } = params;
 
   const student = await fastify.drizzle
-    .select({ id: accounts.id, email: accounts.email, displayName: accounts.displayName })
+    .select({ id: accounts.id, email: accounts.email, displayName: accounts.displayName, locale: accounts.locale })
     .from(accounts)
     .where(eq(accounts.id, studentId))
     .limit(1);
@@ -464,12 +465,6 @@ export async function createStudentBooking(
 
   // Send booking confirmation email with calendar invite attachment
   try {
-    const bogotaDate = new Intl.DateTimeFormat("es-CO", {
-      timeZone: "America/Bogota",
-      dateStyle: "full",
-      timeStyle: "short",
-    }).format(startsAt!);
-
     const icalInvite = buildIcal({
       uid: bookingId!,
       startsAt: startsAt!,
@@ -481,23 +476,19 @@ export async function createStudentBooking(
       method: "REQUEST",
     });
 
-    const safeStudentName = escapeHtml(student[0].displayName);
-    const safeProductName = escapeHtml(product?.name ?? "inglés");
+    const confirmation = buildBookingConfirmedEmail({
+      locale: student[0].locale,
+      studentName: student[0].displayName,
+      productName: product?.name ?? "inglés",
+      startsAt: startsAt!,
+      meetLink,
+    });
 
     await fastify.mailer.sendMail({
       from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
       to: student[0].email,
-      subject: "✅ Clase confirmada",
-      html: renderEmailHtml({
-        title: "Clase confirmada",
-        bodyHtml: `
-          <p>Hola ${safeStudentName},</p>
-          <p>Tu clase de <strong>${safeProductName}</strong> está confirmada.</p>
-          <p><strong>Fecha:</strong> ${bogotaDate} (Colombia)</p>
-          ${meetLink ? `<p><strong>Link de videollamada:</strong> <a href="${meetLink}" style="color:${BRAND_COLOR};">${meetLink}</a></p>` : ""}
-          <p>Si tienes preguntas, responde a este correo.</p>
-        `,
-      }),
+      subject: confirmation.subject,
+      html: confirmation.html,
       attachments: [
         {
           filename: "clase.ics",
