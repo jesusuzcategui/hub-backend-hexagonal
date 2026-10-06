@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import { FastifyInstance } from "fastify";
 import { env } from "../config/env";
 import { createDrizzle, type DrizzleDb } from "../db";
+import { assertSafeTestDb } from "../lib/test-db-guard";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -12,6 +13,7 @@ declare module "fastify" {
 }
 
 async function postgresPlugin(fastify: FastifyInstance): Promise<void> {
+  assertSafeTestDb(env.database.url, process.env);
   const pool = new Pool({ connectionString: env.database.url });
 
   await pool.query("SELECT 1");
