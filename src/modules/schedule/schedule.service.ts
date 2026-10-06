@@ -1,8 +1,12 @@
-import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { and, asc, eq, gt, isNull, ne, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import type { PgDatabase } from "drizzle-orm/pg-core";
+import type { NodePgQueryResultHKT } from "drizzle-orm/node-postgres";
 import { env } from "../../config/env.js";
 import { accounts } from "../../db/schema/users.js";
 import { products } from "../../db/schema/ecommerce.js";
+import * as schema from "../../db/schema/index.js";
 import { availabilities, blockedSlots, bookings, classCredits, weeklySlots } from "../../db/schema/scheduling.js";
 import { escapeHtml } from "../payments/payments.service.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
@@ -25,7 +29,7 @@ function icalEscape(s: string): string {
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 }
 
-function buildIcal({
+export function buildIcal({
   uid,
   startsAt,
   endsAt,
@@ -212,6 +216,145 @@ export async function getStudentCredits(fastify: FastifyInstance, userId: string
   };
 }
 
+
+/** A drizzle handle: the pool-backed db or a transaction opened by the caller. */
+export type DbHandle = PgDatabase<NodePgQueryResultHKT, typeof schema>;
+
+export type BookingConflict = "blocked" | "slot_taken" | "student_busy";
+
+export interface BookingTarget {
+  weeklySlotId: string | null;
+  availabilityId: string | null;
+  startsAt: Date;
+  endsAt: Date;
+}
+
+/**
+ * Serializes everything that books the same instant. Bookings have no unique constraint (a weekly
+ * slot is a rule, not a row), so "check then insert" would race without it. Transaction-scoped and
+ * re-entrant: calling it twice in one transaction is a no-op. Callers that lock several instants
+ * must do it in ascending time order to avoid deadlocks.
+ */
+export async function lockBookingInstant(tx: DbHandle, startsAt: Date): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`booking-instant:${startsAt.getTime()}`}))`);
+}
+
+/**
+ * Per-occurrence availability checks, shared by single bookings and series. Must run inside the
+ * caller's transaction. Returns the first conflict found, or null when the occurrence is free.
+ * Side effect for legacy availability slots: marks the availability as booked (rolled back with
+ * the transaction if anything later fails).
+ */
+export async function checkOccurrenceInTx(
+  tx: DbHandle,
+  params: { studentId: string; target: BookingTarget; replacesBookingId?: string },
+): Promise<BookingConflict | null> {
+  const { studentId, target, replacesBookingId } = params;
+  const { weeklySlotId, availabilityId, startsAt, endsAt } = target;
+
+  await lockBookingInstant(tx, startsAt);
+
+  const [block] = await tx
+    .select({ id: blockedSlots.id })
+    .from(blockedSlots)
+    .where(and(sql`${blockedSlots.startsAt} < ${endsAt}`, sql`${blockedSlots.endsAt} > ${startsAt}`))
+    .limit(1);
+  if (block) return "blocked";
+
+  if (weeklySlotId) {
+    // Someone else booking the same weekly slot + date
+    const [existing] = await tx
+      .select({ id: bookings.id })
+      .from(bookings)
+      .where(
+        and(
+          eq(bookings.weeklySlotId, weeklySlotId),
+          eq(bookings.startsAt, startsAt),
+          sql`${bookings.status} IN ('confirmed', 'pending')`,
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (existing) return "slot_taken";
+  } else if (availabilityId) {
+    const [slot] = await tx
+      .select({ isBooked: availabilities.isBooked })
+      .from(availabilities)
+      .where(eq(availabilities.id, availabilityId))
+      .for("update");
+    if (!slot || slot.isBooked) return "slot_taken";
+    await tx.update(availabilities).set({ isBooked: true }).where(eq(availabilities.id, availabilityId));
+  }
+
+  const [busy] = await tx
+    .select({ id: bookings.id })
+    .from(bookings)
+    .where(
+      and(
+        eq(bookings.studentId, studentId),
+        sql`${bookings.status} IN ('confirmed', 'pending')`,
+        sql`${bookings.startsAt} < ${endsAt}`,
+        sql`${bookings.endsAt} > ${startsAt}`,
+        ...(replacesBookingId ? [ne(bookings.id, replacesBookingId)] : []),
+      ),
+    )
+    .limit(1);
+  if (busy) return "student_busy";
+
+  return null;
+}
+
+/**
+ * Inserts one confirmed booking charged to `credit` (and, when `consumeCredit`, deducts 1 from that
+ * block, guarded so a block can never go over its total). Runs inside the caller's transaction.
+ */
+export async function insertBookingInTx(
+  tx: DbHandle,
+  params: {
+    studentId: string;
+    target: BookingTarget;
+    credit: { id: string; productId: string };
+    consumeCredit: boolean;
+    notes?: string | null;
+    seriesId?: string | null;
+  },
+): Promise<{ bookingId: string; meetLink: string }> {
+  const { studentId, target, credit, consumeCredit, notes, seriesId } = params;
+
+  if (consumeCredit) {
+    const charged = await tx
+      .update(classCredits)
+      .set({ usedCredits: sql`${classCredits.usedCredits} + 1` })
+      .where(and(eq(classCredits.id, credit.id), sql`${classCredits.usedCredits} < ${classCredits.totalCredits}`))
+      .returning({ id: classCredits.id });
+    if (charged.length === 0) throw new AppError(409, "NO_CREDITS", "No credits remaining");
+  }
+
+  const bookingId = randomUUID();
+  const meetLink = `${env.jitsi.baseUrl}/clase-${bookingId.replace(/-/g, "")}`;
+  await tx.insert(bookings).values({
+    id: bookingId,
+    studentId,
+    creditId: credit.id,
+    availabilityId: target.availabilityId,
+    weeklySlotId: target.weeklySlotId,
+    productId: credit.productId,
+    seriesId: seriesId ?? null,
+    status: "confirmed",
+    startsAt: target.startsAt,
+    endsAt: target.endsAt,
+    studentNotes: notes ?? null,
+    meetLink,
+  });
+  return { bookingId, meetLink };
+}
+
+function conflictToError(conflict: BookingConflict): Error {
+  if (conflict === "blocked") return new Error("Slot is blocked");
+  if (conflict === "slot_taken") return new Error("Slot already booked");
+  return new AppError(409, "STUDENT_BUSY", "You are already booked at that time");
+}
+
 export async function createStudentBooking(
   fastify: FastifyInstance,
   params: {
@@ -224,9 +367,11 @@ export async function createStudentBooking(
     // was already consumed by the booking being replaced, so it must not be
     // charged again.
     consumeCredit?: boolean;
+    // The booking this one replaces (reschedule): excluded from the student-busy check.
+    replacesBookingId?: string;
   },
 ) {
-  const { studentId, slotId, creditId, notes, consumeCredit = true } = params;
+  const { studentId, slotId, creditId, notes, consumeCredit = true, replacesBookingId } = params;
 
   const student = await fastify.drizzle
     .select({ id: accounts.id, email: accounts.email, displayName: accounts.displayName, locale: accounts.locale })
@@ -309,40 +454,9 @@ export async function createStudentBooking(
   let meetLink: string | null = null;
 
   await fastify.drizzle.transaction(async (tx) => {
-    const [block] = await tx
-      .select({ id: blockedSlots.id })
-      .from(blockedSlots)
-      .where(and(sql`${blockedSlots.startsAt} < ${endsAt}`, sql`${blockedSlots.endsAt} > ${startsAt}`))
-      .limit(1);
-    if (block) throw new Error("Slot is blocked");
-
-    if (weeklySlotId) {
-      // Check for race condition: someone else booking same weekly slot + date
-      const [existing] = await tx
-        .select({ id: bookings.id })
-        .from(bookings)
-        .where(
-          and(
-            eq(bookings.weeklySlotId, weeklySlotId),
-            eq(bookings.startsAt, startsAt),
-            sql`${bookings.status} IN ('confirmed', 'pending')`,
-          ),
-        )
-        .for("update")
-        .limit(1);
-      if (existing) throw new Error("Slot already booked");
-    } else if (availabilityId) {
-      const [slot] = await tx
-        .select({ isBooked: availabilities.isBooked })
-        .from(availabilities)
-        .where(eq(availabilities.id, availabilityId))
-        .for("update");
-      if (!slot || slot.isBooked) throw new Error("Slot already booked");
-      await tx
-        .update(availabilities)
-        .set({ isBooked: true })
-        .where(eq(availabilities.id, availabilityId));
-    }
+    const target: BookingTarget = { weeklySlotId, availabilityId, startsAt, endsAt };
+    const conflict = await checkOccurrenceInTx(tx, { studentId, target, replacesBookingId });
+    if (conflict) throw conflictToError(conflict);
 
     const now = new Date();
     let credit: typeof classCredits.$inferSelect;
@@ -382,37 +496,9 @@ export async function createStudentBooking(
     }
     verifiedProductId = credit.productId;
 
-    if (consumeCredit) {
-      await tx
-        .update(classCredits)
-        .set({ usedCredits: sql`${classCredits.usedCredits} + 1` })
-        .where(eq(classCredits.id, credit.id));
-    }
-
-    const [inserted] = await tx
-      .insert(bookings)
-      .values({
-        studentId,
-        creditId: credit.id,
-        availabilityId,
-        weeklySlotId,
-        productId: credit.productId,
-        status: "confirmed",
-        startsAt,
-        endsAt,
-        studentNotes: notes ?? null,
-      })
-      .returning({ id: bookings.id });
-
-    bookingId = inserted.id;
-
-    const jitsiRoom = `clase-${bookingId!.replace(/-/g, "")}`;
-    const jitsiLink = `${env.jitsi.baseUrl}/${jitsiRoom}`;
-    await tx
-      .update(bookings)
-      .set({ meetLink: jitsiLink })
-      .where(eq(bookings.id, bookingId!));
-    meetLink = jitsiLink;
+    const inserted = await insertBookingInTx(tx, { studentId, target, credit, consumeCredit, notes });
+    bookingId = inserted.bookingId;
+    meetLink = inserted.meetLink;
   });
 
   // Load product name using the credit's verified productId (not client-supplied)
@@ -634,6 +720,7 @@ async function rescheduleBookingInternal(fastify: FastifyInstance, booking: Resc
     slotId: newSlotId,
     creditId: booking.creditId,
     consumeCredit: false,
+    replacesBookingId: booking.id,
   });
 
   // Conditional on the status we actually read earlier — if two reschedules

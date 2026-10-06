@@ -10,11 +10,12 @@ const journal = JSON.parse(readFileSync(join(root, "meta", "_journal.json"), "ut
 
 describe("migration 0016_class_reminders", () => {
   it("is registered right after 0015 with a strictly greater `when`", () => {
-    const last = journal.entries[journal.entries.length - 1];
-    expect(last.tag).toBe("0016_class_reminders");
-    expect(last.idx).toBe(16);
-    const maxOther = Math.max(...journal.entries.slice(0, -1).map((e: { when: number }) => e.when));
-    expect(last.when).toBeGreaterThan(maxOther);
+    const entries: Array<{ tag: string; idx: number; when: number }> = journal.entries;
+    const entry = entries.find((e) => e.tag === "0016_class_reminders")!;
+    expect(entry.idx).toBe(16);
+    const before = entries.filter((e) => e.idx < 16);
+    expect(before[before.length - 1].tag).toBe("0015_wp_product_source");
+    expect(entry.when).toBeGreaterThan(Math.max(...before.map((e) => e.when)));
   });
 
   it("adds accounts.locale NOT NULL DEFAULT 'es' constrained to es/en", () => {
