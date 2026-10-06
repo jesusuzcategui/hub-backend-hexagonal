@@ -20,18 +20,18 @@ interface TickLogger {
 }
 
 /** Wraps a run so a tick is skipped while the previous one is still running (no overlap). */
-export function createGuardedTick(run: () => Promise<void>, log: TickLogger): () => Promise<void> {
+export function createGuardedTick(run: () => Promise<void>, log: TickLogger, label = "reminders"): () => Promise<void> {
   let running = false;
   return async () => {
     if (running) {
-      log.warn({}, "reminders: previous run still in progress, skipping tick");
+      log.warn({}, `${label}: previous run still in progress, skipping tick`);
       return;
     }
     running = true;
     try {
       await run();
     } catch (err) {
-      log.error({ errName: (err as Error)?.name }, "reminders: run failed");
+      log.error({ errName: (err as Error)?.name }, `${label}: run failed`);
     } finally {
       running = false;
     }

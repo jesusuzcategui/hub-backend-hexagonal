@@ -22,6 +22,7 @@ import mailerPlugin from "./plugins/mailer";
 import webdavPlugin from "./plugins/webdav";
 import autoPurgePlugin from "./plugins/autoPurge";
 import remindersPlugin from "./plugins/reminders";
+import paymentVerificationPlugin from "./plugins/paymentVerification";
 import { AppError, appErrorBody } from "./lib/errors";
 import { env } from "./config/env";
 
@@ -73,6 +74,7 @@ export const buildApp = (): FastifyInstance => {
   app.register(webdavPlugin);
   app.register(autoPurgePlugin);
   app.register(remindersPlugin);
+  app.register(paymentVerificationPlugin);
   app.register(requestLoggerHook);
 
   // Capture the raw bytes for the two webhook routes (ePayco's signature and PayPal's

@@ -4,8 +4,8 @@
   "description": "Hub Backend — Hexagonal Architecture base (Fastify + TypeScript)",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "REMINDERS_ENABLED=${REMINDERS_ENABLED:-false} tsx watch src/server.ts",
-    "dev:once": "REMINDERS_ENABLED=${REMINDERS_ENABLED:-false} tsx src/server.ts",
+    "dev": "REMINDERS_ENABLED=${REMINDERS_ENABLED:-false} PAYMENT_AUTOVERIFY_ENABLED=${PAYMENT_AUTOVERIFY_ENABLED:-false} tsx watch src/server.ts",
+    "dev:once": "REMINDERS_ENABLED=${REMINDERS_ENABLED:-false} PAYMENT_AUTOVERIFY_ENABLED=${PAYMENT_AUTOVERIFY_ENABLED:-false} tsx src/server.ts",
     "dev:kill": "fuser -k 3003/tcp || true",
     "build": "tsc",
     "start": "node dist/server.js",
