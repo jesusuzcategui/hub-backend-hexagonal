@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { AppError } from "../../lib/errors";
+import { listUpcomingReminders, runReminderPass } from "../schedule/reminders.service";
 import {
   listStudents,
   getStudent,
@@ -439,5 +440,18 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
         })();
 
     reply.status(201).send({ data });
+  });
+
+  // Class reminders: manual run / check. The same pass runs every minute from the reminders plugin.
+  fastify.post("/admin/reminders/run", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const body = (req.body ?? {}) as { dryRun?: unknown };
+    if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+      throw new AppError(400, "VALIDATION_ERROR", "dryRun must be a boolean");
+    }
+    reply.send({ data: await runReminderPass(fastify, { dryRun: body.dryRun === true }) });
+  });
+
+  fastify.get("/admin/reminders/upcoming", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
+    reply.send({ data: await listUpcomingReminders(fastify) });
   });
 }
