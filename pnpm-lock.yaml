@@ -41,6 +41,9 @@ importers:
       hexagonal-payments-core:
         specifier: git+https://github.com/jesusuzcategui/hexagonal-payments-core.git#v0.1.2
         version: git+https://github.com/jesusuzcategui/hexagonal-payments-core.git#1a83f26eafe08c405c09013b8e392cda44b6e274
+      ical.js:
+        specifier: ^2.2.1
+        version: 2.2.1
       ioredis:
         specifier: ^5.4.2
         version: 5.11.1
@@ -1228,6 +1231,9 @@ packages:
   https-proxy-agent@7.0.6:
     resolution: {integrity: sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==}
     engines: {node: '>= 14'}
+
+  ical.js@2.2.1:
+    resolution: {integrity: sha512-yK/UlPbEs316igb/tjRgbFA8ZV75rCsBJp/hWOatpyaPNlgw0dGDmU+FoicOcwX4xXkeXOkYiOmCqNPFpNPkQg==}
 
   ioredis@5.11.1:
     resolution: {integrity: sha512-ehuGcf94bQXhfagULNXrJdfnWO38v070jxSx/qE87Kjzmu2fU7ro5EFAb+OPituLqgfyuQaym5DlrNydW2sJ9A==}
@@ -2698,6 +2704,8 @@ snapshots:
       debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
+
+  ical.js@2.2.1: {}
 
   ioredis@5.11.1:
     dependencies:
