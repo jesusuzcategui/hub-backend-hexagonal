@@ -40,6 +40,39 @@ describe("mapWpItem", () => {
   const warn = vi.fn();
   beforeEach(() => warn.mockReset());
 
+  describe("validityDays", () => {
+    it("carries a numeric validityDays into metadata", () => {
+      const out = mapWpItem(item({}, { validityDays: 90 }), warn);
+      expect(out!.metadata).toEqual({ creditsCount: 4, validityDays: 90 });
+    });
+
+    it("accepts a numeric string", () => {
+      const out = mapWpItem(item({}, { validityDays: "90" }), warn);
+      expect(out!.metadata.validityDays).toBe(90);
+    });
+
+    it.each([["abc"], [0], [-3], [1.5], [""], [null], [{}]])("ignores invalid value %j without breaking the sync", (bad) => {
+      const out = mapWpItem(item({}, { validityDays: bad }), warn);
+      expect(out).not.toBeNull();
+      expect(out!.metadata).toEqual({ creditsCount: 4 });
+    });
+
+    it("leaves metadata untouched when the field is missing", () => {
+      const out = mapWpItem(item(), warn);
+      expect(out!.metadata).toEqual({ creditsCount: 4 });
+    });
+
+    it("keeps a valid validityDays that is already inside the metadata JSON", () => {
+      const out = mapWpItem(item({}, { metadata: '{"creditsCount":4,"validityDays":90}' }), warn);
+      expect(out!.metadata.validityDays).toBe(90);
+    });
+
+    it("the top-level field wins over the metadata JSON value", () => {
+      const out = mapWpItem(item({}, { metadata: '{"creditsCount":4,"validityDays":30}', validityDays: 90 }), warn);
+      expect(out!.metadata.validityDays).toBe(90);
+    });
+  });
+
   it.each([
     ["single-session", 15, 1500, 60000, 1],
     ["basic", 57.5, 5750, 230000, 4],

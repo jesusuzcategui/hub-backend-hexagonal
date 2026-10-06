@@ -50,6 +50,12 @@ function isPositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
+/** Accepts a positive integer or its numeric string; anything else is ignored. */
+function parseValidityDays(value: unknown): number | null {
+  if (typeof value === "string" && /^\s*\d+\s*$/.test(value)) return parseValidityDays(Number(value));
+  return isPositiveInt(value) ? value : null;
+}
+
 function toBool(value: unknown): boolean {
   return value === true || value === 1 || value === "1" || value === "true";
 }
@@ -77,6 +83,9 @@ export function mapWpItem(raw: unknown, warn: Warn = console.warn): WpProduct | 
     return null;
   }
 
+  const validityDays = parseValidityDays(fields.validityDays);
+  const mergedMetadata = validityDays === null ? metadata : { ...metadata, validityDays };
+
   const priceUsdDollars = Number(fields.priceUSD);
   const priceCop = Number(fields.priceCOP);
 
@@ -88,7 +97,7 @@ export function mapWpItem(raw: unknown, warn: Warn = console.warn): WpProduct | 
     priceCop: Number.isFinite(priceCop) ? Math.round(priceCop) : 0,
     priceUsd: Number.isFinite(priceUsdDollars) ? Math.round(priceUsdDollars * 100) : 0,
     isActive: toBool(fields.isActive) && item.status === "publish",
-    metadata,
+    metadata: mergedMetadata,
   };
 }
 
