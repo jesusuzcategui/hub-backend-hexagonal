@@ -3,6 +3,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -65,6 +66,14 @@ export const orders = paymentsSchema.table(
     status: orderStatusEnum("status").notNull().default("open"),
     fulfillmentStatus: fulfillmentStatusEnum("fulfillment_status").notNull().default("pending"),
     paidAt: timestamp("paid_at", { withTimezone: true }),
+    // App-owned review state (NOT part of the core's Order): why the order is in needs_review and the
+    // bookkeeping of the automatic ePayco re-verification. See modules/payments/review-verification.ts.
+    reviewReason: text("review_reason"),
+    reviewFlaggedAt: timestamp("review_flagged_at", { withTimezone: true }),
+    reviewVerifyAttempts: smallint("review_verify_attempts").notNull().default(0),
+    reviewNextVerifyAt: timestamp("review_next_verify_at", { withTimezone: true }),
+    reviewProviderRef: text("review_provider_ref"),
+    reviewAlertedAt: timestamp("review_alerted_at", { withTimezone: true }),
     userId: uuid("user_id")
       .notNull()
       .references(() => accounts.id, { onDelete: "restrict" }),
@@ -77,7 +86,28 @@ export const orders = paymentsSchema.table(
     index("idx_payments_orders_user_id").on(table.userId),
     index("idx_payments_orders_cart_id").on(table.cartId),
     index("idx_payments_orders_status").on(table.status),
+    // Cron scan: only orders still waiting for an ePayco re-verification.
+    index("idx_payments_orders_review_scan")
+      .on(table.reviewNextVerifyAt)
+      .where(
+        sql`${table.reviewReason} = 'contraste_unavailable' AND ${table.fulfillmentStatus} = 'needs_review' AND ${table.reviewNextVerifyAt} IS NOT NULL`,
+      ),
   ],
+);
+
+// Audit trail of everything that happens to an order while it is under review.
+export const orderReviewEvents = paymentsSchema.table(
+  "order_review_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    detail: jsonb("detail").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("idx_order_review_events_order_id").on(table.orderId, table.createdAt)],
 );
 
 // Translation layer for hexagonal-payments-core's `PaymentAttempt` aggregate.
