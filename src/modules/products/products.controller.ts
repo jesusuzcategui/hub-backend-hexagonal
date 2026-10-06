@@ -1,7 +1,5 @@
 import { FastifyRequest, FastifyReply } from "fastify";
-import { listProducts, listProductsForAdmin, getProductBySlug, syncProductFromStrapi, syncAllProducts } from "./products.service";
-import { AppError } from "../../lib/errors";
-import type { StrapiProduct } from "../../lib/strapi";
+import { listProducts, listProductsForAdmin, getProductBySlug, syncAllProducts } from "./products.service";
 
 export async function listProductsController(
   request: FastifyRequest,
@@ -35,44 +33,11 @@ export async function syncAllController(
   reply.status(200).send({ data: { synced: count } });
 }
 
-// Strapi webhook: POST /webhooks/strapi
-export async function strapiWebhookController(
+// WordPress webhook: POST /webhooks/wp. The body is ignored; any valid call triggers a full sync.
+export async function wpWebhookController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const body = request.body as {
-    event: string;
-    uid: string;
-    entry: StrapiProduct;
-  };
-
-  if (body.uid !== "api::product.product") {
-    reply.status(200).send({ ok: true });
-    return;
-  }
-
-  switch (body.event) {
-    case "entry.create":
-    case "entry.update":
-    case "entry.publish":
-      await syncProductFromStrapi(request.server, body.entry);
-      break;
-
-    case "entry.unpublish":
-    case "entry.delete": {
-      const db = request.server.drizzle;
-      const { products } = await import("../../db/schema");
-      const { eq } = await import("drizzle-orm");
-      await db
-        .update(products)
-        .set({ isActive: false, updatedAt: new Date() })
-        .where(eq(products.strapiDocumentId, body.entry.documentId));
-      break;
-    }
-
-    default:
-      break;
-  }
-
-  reply.status(200).send({ ok: true });
+  const synced = await syncAllProducts(request.server);
+  reply.status(200).send({ ok: true, synced });
 }

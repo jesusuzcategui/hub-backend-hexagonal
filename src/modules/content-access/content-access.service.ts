@@ -6,14 +6,14 @@ export async function checkContentAccess(
   fastify: FastifyInstance,
   userId: string,
   contentType: string,
-  documentId: string,
+  externalId: string,
 ): Promise<boolean> {
   const now = new Date();
   const record = await fastify.drizzle.query.contentAccess.findFirst({
     where: and(
       eq(contentAccess.userId, userId),
-      eq(contentAccess.strapiContentType, contentType),
-      eq(contentAccess.strapiDocumentId, documentId),
+      eq(contentAccess.contentType, contentType),
+      eq(contentAccess.externalId, externalId),
       isNull(contentAccess.revokedAt),
       or(isNull(contentAccess.validUntil), gt(contentAccess.validUntil, now)),
     ),
@@ -28,8 +28,8 @@ export async function listUserAccess(fastify: FastifyInstance, userId: string) {
     where: and(eq(contentAccess.userId, userId), isNull(contentAccess.revokedAt)),
     columns: {
       id: true,
-      strapiContentType: true,
-      strapiDocumentId: true,
+      contentType: true,
+      externalId: true,
       reason: true,
       orderId: true,
       validFrom: true,
@@ -46,7 +46,7 @@ export async function grantContentAccess(
 ): Promise<void> {
   const product = await fastify.drizzle.query.products.findFirst({
     where: eq(products.id, productId),
-    columns: { strapiDocumentId: true, strapiContentType: true },
+    columns: { externalId: true, contentType: true },
   });
 
   if (!product) return;
@@ -55,8 +55,8 @@ export async function grantContentAccess(
     .insert(contentAccess)
     .values({
       userId,
-      strapiContentType: product.strapiContentType,
-      strapiDocumentId: product.strapiDocumentId,
+      contentType: product.contentType,
+      externalId: product.externalId,
       reason: "order",
       orderId,
     })

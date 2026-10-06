@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { FastifyInstance } from "fastify";
 import { getApp, closeApp, deleteTestUser } from "../../../test/helpers";
 import { eq } from "drizzle-orm";
@@ -31,14 +31,41 @@ afterAll(async () => {
 });
 
 describe("POST /admin/products/sync", () => {
-  it("syncs products from Strapi (admin)", async () => {
+  it("syncs products from WordPress (admin)", async () => {
+    // WordPress is never called for real: fetch is stubbed with a canned feed.
+    const wpItem = (id: number, slug: string, usd: number, credits: number) => ({
+      id,
+      slug,
+      status: "publish",
+      title: { raw: slug },
+      nodus_fields: {
+        name: slug,
+        slug,
+        description: null,
+        productType: "class_package",
+        priceCOP: 1000 * id,
+        priceUSD: usd,
+        isActive: true,
+        metadata: JSON.stringify({ creditsCount: credits }),
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify([wpItem(75, "single-session", 15, 1), wpItem(76, "basic", 57.5, 4)]),
+          { status: 200 },
+        ),
+      ),
+    );
     const res = await app.inject({
       method: "POST",
       url: "/admin/products/sync",
       headers: { authorization: `Bearer ${adminToken}` },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().data.synced).toBeGreaterThanOrEqual(6);
+    vi.unstubAllGlobals();
+    expect(res.json().data.synced).toBe(2);
   });
 
   it("returns 403 for non-admin", async () => {
@@ -83,98 +110,12 @@ describe("GET /products/:slug", () => {
     const { data } = res.json();
     expect(data.slug).toBe("plan-1-clase");
     expect(data.priceCop).toBe(50000);
-    expect(data.priceUsd).toBe(35);
+    expect(data.priceUsd).toBe(3500); // stored in cents
     expect(data.metadata).toMatchObject({ credits: 1 });
   });
 
   it("returns 404 for unknown slug", async () => {
     const res = await app.inject({ method: "GET", url: "/products/no-existe" });
     expect(res.statusCode).toBe(404);
-  });
-});
-
-const WEBHOOK_SECRET = process.env.STRAPI_WEBHOOK_SECRET!;
-
-describe("POST /webhooks/strapi", () => {
-  it("returns 401 without signature header", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/webhooks/strapi",
-      body: { event: "entry.create", uid: "api::product.product", entry: {} },
-    });
-    expect(res.statusCode).toBe(401);
-  });
-
-  it("returns 401 with wrong signature", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/webhooks/strapi",
-      headers: { "x-strapi-signature": "wrongsecret" },
-      body: { event: "entry.create", uid: "api::product.product", entry: {} },
-    });
-    expect(res.statusCode).toBe(401);
-  });
-
-  it("upserts product on entry.update event", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/webhooks/strapi",
-      headers: { "x-strapi-signature": WEBHOOK_SECRET },
-      body: {
-        event: "entry.update",
-        uid: "api::product.product",
-        entry: {
-          id: 2,
-          documentId: "wzieurq2nlcooy7igzwqigt8",
-          name: "Plan 1 Clase Updated",
-          slug: "plan-1-clase",
-          productType: "class_package",
-          priceCOP: 55000,
-          priceUSD: 38,
-          isActive: true,
-          metadata: { credits: 1 },
-        },
-      },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().ok).toBe(true);
-
-    const product = await app.drizzle.query.products.findFirst({
-      where: eq(products.slug, "plan-1-clase"),
-      columns: { priceCop: true },
-    });
-    expect(product?.priceCop).toBe(55000);
-
-    // revert
-    await app.inject({
-      method: "POST",
-      url: "/webhooks/strapi",
-      headers: { "x-strapi-signature": WEBHOOK_SECRET },
-      body: {
-        event: "entry.update",
-        uid: "api::product.product",
-        entry: {
-          id: 2,
-          documentId: "wzieurq2nlcooy7igzwqigt8",
-          name: "Plan 1 Clase",
-          slug: "plan-1-clase",
-          productType: "class_package",
-          priceCOP: 50000,
-          priceUSD: 35,
-          isActive: true,
-          metadata: { credits: 1 },
-        },
-      },
-    });
-  });
-
-  it("ignores unknown content types", async () => {
-    const res = await app.inject({
-      method: "POST",
-      url: "/webhooks/strapi",
-      headers: { "x-strapi-signature": WEBHOOK_SECRET },
-      body: { event: "entry.create", uid: "api::other.other", entry: {} },
-    });
-    expect(res.statusCode).toBe(200);
   });
 });

@@ -52,9 +52,14 @@ const envSchema = z.object({
   PAYPAL_SUCCESS_URL: z.string().default(""),
   PAYPAL_CANCEL_URL: z.string().default(""),
 
-  STRAPI_URL: z.string().url(),
-  STRAPI_TOKEN: z.string().min(1),
-  STRAPI_WEBHOOK_SECRET: z.string().min(32),
+  WP_URL: z.string().url(),
+  WP_APP_USER: z.string().min(1),
+  WP_APP_PASS: z.string().min(1),
+  WP_WEBHOOK_SECRET: z.string().min(32),
+
+  // Legacy: only used by portfolio reviews until they move to WordPress.
+  STRAPI_URL: z.string().url().optional().or(z.literal('')).transform(v => v || undefined),
+  STRAPI_TOKEN: z.string().optional().or(z.literal('')).transform(v => v || undefined),
 
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
@@ -153,10 +158,16 @@ export const env = {
     successUrl: _env.PAYPAL_SUCCESS_URL,
     cancelUrl: _env.PAYPAL_CANCEL_URL,
   },
+  wp: {
+    url: _env.WP_URL,
+    appUser: _env.WP_APP_USER,
+    appPass: _env.WP_APP_PASS,
+    webhookSecret: _env.WP_WEBHOOK_SECRET,
+  },
+  // Legacy: only used by portfolio reviews until they move to WordPress.
   strapi: {
     url: _env.STRAPI_URL,
     token: _env.STRAPI_TOKEN,
-    webhookSecret: _env.STRAPI_WEBHOOK_SECRET,
   },
   caldav: {
     url: _env.CALDAV_URL,

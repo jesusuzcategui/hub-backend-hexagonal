@@ -7,7 +7,7 @@ import {
   listProductsForAdminController,
   getProductController,
   syncAllController,
-  strapiWebhookController,
+  wpWebhookController,
 } from "./products.controller";
 
 async function requireAdmin(
@@ -19,23 +19,18 @@ async function requireAdmin(
   }
 }
 
-async function verifyStrapiSecret(request: FastifyRequest, reply: FastifyReply) {
-  const provided = request.headers["x-strapi-signature"] as string | undefined;
-  const expected = env.strapi.webhookSecret;
+async function verifyWpSecret(request: FastifyRequest, reply: FastifyReply) {
+  const provided = request.headers["x-webhook-secret"];
+  const expected = env.wp.webhookSecret;
 
-  if (!provided) {
-    reply.status(401).send({ error: { code: "MISSING_SIGNATURE", message: "Missing webhook signature" } });
-    return;
+  if (typeof provided !== "string" || provided === "") {
+    return reply.status(401).send({ error: { code: "MISSING_SIGNATURE", message: "Missing webhook secret" } });
   }
 
-  try {
-    const providedBuf = Buffer.from(provided);
-    const expectedBuf = Buffer.from(expected);
-    if (providedBuf.length !== expectedBuf.length || !timingSafeEqual(providedBuf, expectedBuf)) {
-      reply.status(401).send({ error: { code: "INVALID_SIGNATURE", message: "Invalid webhook signature" } });
-    }
-  } catch {
-    reply.status(401).send({ error: { code: "INVALID_SIGNATURE", message: "Invalid webhook signature" } });
+  const providedBuf = Buffer.from(provided);
+  const expectedBuf = Buffer.from(expected);
+  if (providedBuf.length !== expectedBuf.length || !timingSafeEqual(providedBuf, expectedBuf)) {
+    return reply.status(401).send({ error: { code: "INVALID_SIGNATURE", message: "Invalid webhook secret" } });
   }
 }
 
@@ -44,8 +39,8 @@ export async function productsRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get("/products", listProductsController);
   fastify.get("/products/:slug", getProductController);
 
-  // Strapi webhook — verified by shared secret header X-Strapi-Signature
-  fastify.post("/webhooks/strapi", { preHandler: verifyStrapiSecret }, strapiWebhookController);
+  // WordPress webhook — verified by shared secret header X-Webhook-Secret
+  fastify.post("/webhooks/wp", { preHandler: verifyWpSecret }, wpWebhookController);
 
   // Admin: manual sync
   fastify.post(

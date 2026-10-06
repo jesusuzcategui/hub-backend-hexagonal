@@ -64,8 +64,8 @@ beforeAll(async () => {
   const [product] = await app.drizzle
     .insert(products)
     .values({
-      strapiDocumentId: `test-weekly-slots-${Date.now()}`,
-      strapiContentType: "product",
+      externalId: `test-weekly-slots-${Date.now()}`,
+      contentType: "nodus_product",
       slug: `test-weekly-slots-${Date.now()}`,
       name: "Test Weekly Slots Product",
       priceCop: 100000,

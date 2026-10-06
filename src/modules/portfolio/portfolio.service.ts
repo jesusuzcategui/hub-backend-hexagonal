@@ -1,6 +1,7 @@
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { env } from "../../config/env.js";
+import { AppError } from "../../lib/errors.js";
 import { bookings, mentoringRequests, weeklySlots } from "../../db/schema/scheduling.js";
 import type { BookSlotBody, SubmitReviewBody } from "./portfolio.schemas.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
@@ -418,6 +419,11 @@ ${message ? `<h3 style="margin:20px 0 8px">Mensaje</h3><p style="white-space:pre
 }
 
 export async function submitReview(body: SubmitReviewBody): Promise<void> {
+  // Reviews still live in Strapi; STRAPI_* are optional now that products come from WordPress.
+  if (!env.strapi.url || !env.strapi.token) {
+    throw new AppError(503, "REVIEWS_UNAVAILABLE", "Reviews are temporarily unavailable");
+  }
+
   const res = await fetch(`${env.strapi.url}/api/reviews?status=draft`, {
     method: "POST",
     headers: {

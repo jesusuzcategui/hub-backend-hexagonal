@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { bookSlotSchema, submitReviewSchema } from "./portfolio.schemas.js";
 import { createMentoringRequest, getPublicSlots, submitReview } from "./portfolio.service.js";
+import { AppError } from "../../lib/errors.js";
 import { verifyCaptchaToken } from "./portfolio.captcha.js";
 
 export async function portfolioRoutes(fastify: FastifyInstance): Promise<void> {
@@ -53,6 +54,9 @@ export async function portfolioRoutes(fastify: FastifyInstance): Promise<void> {
       await submitReview(parsed.data);
       reply.code(201).send({ data: { ok: true } });
     } catch (err: unknown) {
+      if (err instanceof AppError) {
+        return reply.code(err.statusCode).send({ error: { code: err.code, message: err.message } });
+      }
       const msg = err instanceof Error ? err.message : "Submission failed";
       reply.code(500).send({ error: { code: "INTERNAL_ERROR", message: msg } });
     }

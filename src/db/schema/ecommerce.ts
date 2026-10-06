@@ -40,8 +40,8 @@ export const products = ecommerceSchema.table(
   "products",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    strapiDocumentId: text("strapi_document_id").notNull().unique(),
-    strapiContentType: text("strapi_content_type").notNull(),
+    externalId: text("external_id").notNull().unique(),
+    contentType: text("content_type").notNull(),
     slug: text("slug").notNull().unique(),
     name: text("name").notNull(),
     description: text("description"),
@@ -54,7 +54,7 @@ export const products = ecommerceSchema.table(
   },
   (table) => [
     index("idx_products_slug").on(table.slug),
-    index("idx_products_strapi_doc_id").on(table.strapiDocumentId),
+    index("idx_products_external_id").on(table.externalId),
   ],
 );
 
@@ -117,8 +117,8 @@ export const contentAccess = ecommerceSchema.table(
     userId: uuid("user_id")
       .notNull()
       .references(() => accounts.id, { onDelete: "cascade" }),
-    strapiContentType: text("strapi_content_type").notNull(),
-    strapiDocumentId: text("strapi_document_id").notNull(),
+    contentType: text("content_type").notNull(),
+    externalId: text("external_id").notNull(),
     reason: accessReasonEnum("reason").notNull(),
     // References payments.orders (hexagonal-payments-core's Order aggregate) —
     // the legacy ecommerce.orders/subscriptions tables it used to point to were dropped.
@@ -133,20 +133,20 @@ export const contentAccess = ecommerceSchema.table(
   },
   (table) => [
     uniqueIndex("uq_content_access_order")
-      .on(table.userId, table.strapiContentType, table.strapiDocumentId, table.orderId)
+      .on(table.userId, table.contentType, table.externalId, table.orderId)
       .where(sql`${table.reason} = 'order' AND ${table.orderId} IS NOT NULL`),
     uniqueIndex("uq_content_access_subscription")
       .on(
         table.userId,
-        table.strapiContentType,
-        table.strapiDocumentId,
+        table.contentType,
+        table.externalId,
         table.subscriptionId,
       )
       .where(
         sql`${table.reason} = 'subscription' AND ${table.subscriptionId} IS NOT NULL`,
       ),
     index("idx_content_access_active")
-      .on(table.userId, table.strapiContentType, table.strapiDocumentId)
+      .on(table.userId, table.contentType, table.externalId)
       .where(sql`${table.revokedAt} IS NULL`),
   ],
 );

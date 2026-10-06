@@ -11,7 +11,7 @@ Stack: Fastify 5 + TypeScript + PostgreSQL + Redis + MercadoPago + Google Calend
 - **Compra:** única (1 sesión o paquete de N sesiones)
 - **Post-pago:** estudiante puede agendar su(s) sesión(es) desde su perfil
 - **Sesión:** evento en Google Calendar del profesor con Google Meet auto-generado
-- **Contenido:** gestionado en Strapi CMS, vinculado al hub por `documentId`
+- **Contenido:** productos gestionados en WordPress headless (post type `nodus_product`), vinculados al hub por `external_id` (id del post). Strapi quedó solo para reviews. (Migración 0015; el resto de este documento conserva la terminología original de Strapi.)
 
 ---
 
@@ -552,9 +552,14 @@ GOOGLE_SERVICE_ACCOUNT_EMAIL=
 GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=
 GOOGLE_CALENDAR_ID=         # ID del calendario del profesor
 
-# Strapi
-STRAPI_URL=https://cms.jesusuzcategui.com
-STRAPI_WEBHOOK_SECRET=      # Para verificar webhooks entrantes de Strapi
+# WordPress (fuente de productos)
+WP_URL=
+WP_APP_USER=
+WP_APP_PASS=
+WP_WEBHOOK_SECRET=         # min 32; header X-Webhook-Secret en POST /webhooks/wp
+# Strapi (solo reviews, opcional)
+STRAPI_URL=
+STRAPI_TOKEN=
 
 # Cookies
 COOKIE_SECURE=true

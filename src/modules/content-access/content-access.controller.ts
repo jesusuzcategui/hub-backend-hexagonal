@@ -5,11 +5,14 @@ export async function checkAccessController(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const query = request.query as { contentType?: string; documentId?: string };
+  const query = request.query as { contentType?: string; externalId?: string; documentId?: string };
 
-  if (!query.contentType || !query.documentId) {
+  // `documentId` is the legacy (Strapi-era) query param name, kept as an alias.
+  const externalId = query.externalId ?? query.documentId;
+
+  if (!query.contentType || !externalId) {
     reply.status(400).send({
-      error: { code: "MISSING_PARAMS", message: "contentType and documentId are required" },
+      error: { code: "MISSING_PARAMS", message: "contentType and externalId are required" },
     });
     return;
   }
@@ -18,7 +21,7 @@ export async function checkAccessController(
     request.server,
     request.user.sub,
     query.contentType,
-    query.documentId,
+    externalId,
   );
 
   reply.send({ data: { hasAccess } });
