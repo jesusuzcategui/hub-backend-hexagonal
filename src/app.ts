@@ -22,7 +22,7 @@ import mailerPlugin from "./plugins/mailer";
 import webdavPlugin from "./plugins/webdav";
 import autoPurgePlugin from "./plugins/autoPurge";
 import remindersPlugin from "./plugins/reminders";
-import { AppError } from "./lib/errors";
+import { AppError, appErrorBody } from "./lib/errors";
 import { env } from "./config/env";
 
 // Routes whose handlers need the exact bytes that were signed by the provider
@@ -122,9 +122,7 @@ export const buildApp = (): FastifyInstance => {
 
   app.setErrorHandler((error: FastifyError | AppError, _request, reply) => {
     if (error instanceof AppError) {
-      reply.status(error.statusCode).send({
-        error: { code: error.code, message: error.message },
-      });
+      reply.status(error.statusCode).send(appErrorBody(error));
       return;
     }
 
