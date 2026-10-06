@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { env } from "../../config/env.js";
 import { accounts } from "../../db/schema/users.js";
@@ -6,6 +6,8 @@ import { products } from "../../db/schema/ecommerce.js";
 import { availabilities, blockedSlots, bookings, classCredits, weeklySlots } from "../../db/schema/scheduling.js";
 import { escapeHtml } from "../payments/payments.service.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
+import { AppError } from "../../lib/errors.js";
+import { isUsableBlock, pickCreditBlock, summarizeBalance, type BalanceSummary } from "./credit-balance.js";
 import "../../plugins/caldav.js";
 
 function icalDate(d: Date): string {
@@ -201,8 +203,13 @@ export async function getAvailableSlots(fastify: FastifyInstance) {
   return available.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
 }
 
-export async function getStudentCredits(fastify: FastifyInstance, userId: string) {
-  const now = new Date();
+export type StudentCreditSummary = BalanceSummary & {
+  /** Same entries as `blocks`, plus the productId the legacy campus payload carried. */
+  blocks: Array<BalanceSummary["blocks"][number] & { productId: string }>;
+};
+
+/** One balance per student: remaining credits summed over their non-expired blocks. */
+export async function getStudentCredits(fastify: FastifyInstance, userId: string): Promise<StudentCreditSummary> {
   const rows = await fastify.drizzle
     .select({
       creditId: classCredits.id,
@@ -211,26 +218,18 @@ export async function getStudentCredits(fastify: FastifyInstance, userId: string
       totalCredits: classCredits.totalCredits,
       usedCredits: classCredits.usedCredits,
       expiresAt: classCredits.expiresAt,
+      createdAt: classCredits.createdAt,
     })
     .from(classCredits)
     .innerJoin(products, eq(classCredits.productId, products.id))
-    .where(
-      and(
-        eq(classCredits.userId, userId),
-        sql`${classCredits.usedCredits} < ${classCredits.totalCredits}`,
-        or(isNull(classCredits.expiresAt), gt(classCredits.expiresAt, now)),
-      ),
-    );
+    .where(eq(classCredits.userId, userId));
 
-  return rows.map((r) => ({
-    creditId: r.creditId,
-    productId: r.productId,
-    productName: r.productName,
-    totalCredits: r.totalCredits,
-    usedCredits: r.usedCredits,
-    remaining: r.totalCredits - r.usedCredits,
-    expiresAt: r.expiresAt,
-  }));
+  const summary = summarizeBalance(rows, new Date());
+  const productByCredit = new Map(rows.map((r) => [r.creditId, r.productId]));
+  return {
+    ...summary,
+    blocks: summary.blocks.map((b) => ({ ...b, productId: productByCredit.get(b.creditId)! })),
+  };
 }
 
 export async function createStudentBooking(
@@ -238,7 +237,8 @@ export async function createStudentBooking(
   params: {
     studentId: string;
     slotId: string; // composite: weeklySlotId_YYYYMMDD_HHMM OR legacy availabilityId (uuid)
-    creditId: string;
+    // Optional: when absent the block that expires first is charged automatically.
+    creditId?: string;
     notes?: string;
     // false when this booking is the "new" half of a reschedule — the credit
     // was already consumed by the booking being replaced, so it must not be
@@ -364,31 +364,56 @@ export async function createStudentBooking(
         .where(eq(availabilities.id, availabilityId));
     }
 
-    const [credit] = await tx
-      .select()
-      .from(classCredits)
-      .where(and(eq(classCredits.id, creditId), eq(classCredits.userId, studentId)))
-      .for("update");
+    const now = new Date();
+    let credit: typeof classCredits.$inferSelect;
 
-    if (!credit) throw new Error("Credit not found");
-    // consumeCredit=false: this credit was already consumed by the booking
-    // being replaced (reschedule) — don't re-check remaining balance or
-    // increment again, that would double-charge a single credit.
-    if (consumeCredit && credit.usedCredits >= credit.totalCredits) throw new Error("No credits remaining");
+    if (creditId) {
+      const [explicit] = await tx
+        .select()
+        .from(classCredits)
+        .where(and(eq(classCredits.id, creditId), eq(classCredits.userId, studentId)))
+        .for("update");
+      if (!explicit) throw new Error("Credit not found");
+      // consumeCredit=false: this credit was already consumed by the booking
+      // being replaced (reschedule) — don't re-check remaining balance or
+      // expiry (a class booked while valid is honored) and don't increment
+      // again, that would double-charge a single credit.
+      if (consumeCredit) {
+        if (explicit.usedCredits >= explicit.totalCredits) throw new AppError(409, "NO_CREDITS", "No credits remaining");
+        if (!isUsableBlock(explicit, now)) throw new AppError(409, "CREDIT_EXPIRED", "This credit has expired");
+      }
+      credit = explicit;
+    } else {
+      if (!consumeCredit) throw new Error("creditId is required when not consuming a credit");
+      // Lock every block of the student so two concurrent bookings cannot pick the same one.
+      const blocksOfStudent = await tx
+        .select()
+        .from(classCredits)
+        .where(eq(classCredits.userId, studentId))
+        .orderBy(asc(classCredits.createdAt))
+        .for("update");
+      const picked = pickCreditBlock(blocksOfStudent, now);
+      if (!picked) {
+        const hasExpiredLeftovers = blocksOfStudent.some((b) => b.usedCredits < b.totalCredits);
+        if (hasExpiredLeftovers) throw new AppError(409, "CREDITS_EXPIRED", "Your credits have expired");
+        throw new AppError(409, "NO_CREDITS", "No credits remaining");
+      }
+      credit = picked;
+    }
     verifiedProductId = credit.productId;
 
     if (consumeCredit) {
       await tx
         .update(classCredits)
         .set({ usedCredits: sql`${classCredits.usedCredits} + 1` })
-        .where(eq(classCredits.id, creditId));
+        .where(eq(classCredits.id, credit.id));
     }
 
     const [inserted] = await tx
       .insert(bookings)
       .values({
         studentId,
-        creditId,
+        creditId: credit.id,
         availabilityId,
         weeklySlotId,
         productId: credit.productId,

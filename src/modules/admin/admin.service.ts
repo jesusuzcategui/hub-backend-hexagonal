@@ -16,11 +16,11 @@ import {
 } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import "../../plugins/caldav.js";
-import { adminRescheduleBooking, createStudentBooking, getAvailableSlots } from "../schedule/schedule.service.js";
+import { adminRescheduleBooking, createStudentBooking, getAvailableSlots, getStudentCredits } from "../schedule/schedule.service.js";
+import { resolveGrantExpiry } from "../schedule/credit-balance.js";
 import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer, resolveOrderReview, listPaymentMethods, type PaymentMethod } from "../payments/payments.service.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import { createCart } from "../cart/cart.service.js";
-import { toActiveCreditDto } from "./active-credits.js";
 import { toDecimalMajor } from "../../adapters/payments/money.js";
 
 const ARGON2_OPTIONS: argon2.Options = {
@@ -625,9 +625,19 @@ export async function grantCreditsToStudent(
 
   const product = await db.query.products.findFirst({
     where: and(eq(products.id, productId), eq(products.isActive, true)),
-    columns: { id: true },
+    columns: { id: true, metadata: true },
   });
   if (!product) throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found");
+
+  // Validity is counted from the grant date: explicit admin date wins, else the
+  // product's metadata.validityDays, else 60 days.
+  let explicitExpiry: Date | null = null;
+  if (expiresAt) {
+    explicitExpiry = new Date(expiresAt);
+    if (Number.isNaN(explicitExpiry.getTime())) {
+      throw new AppError(400, "INVALID_EXPIRES_AT", "expiresAt must be a valid date");
+    }
+  }
 
   const [credit] = await db
     .insert(classCredits)
@@ -640,7 +650,7 @@ export async function grantCreditsToStudent(
       grantNotes: notes ?? null,
       totalCredits,
       usedCredits: 0,
-      expiresAt: expiresAt ? new Date(expiresAt) : null,
+      expiresAt: resolveGrantExpiry(new Date(), product.metadata, explicitExpiry),
     })
     .returning({
       id: classCredits.id,
@@ -649,6 +659,7 @@ export async function grantCreditsToStudent(
       paymentMethod: classCredits.paymentMethod,
       grantNotes: classCredits.grantNotes,
       createdAt: classCredits.createdAt,
+      expiresAt: classCredits.expiresAt,
     });
 
   return credit;
@@ -691,33 +702,13 @@ export async function updateStudent(
 }
 
 export async function listStudentActiveCredits(fastify: FastifyInstance, userId: string) {
-  const now = new Date();
-  const rows = await fastify.drizzle
-    .select({
-      creditId: classCredits.id,
-      productName: products.name,
-      totalCredits: classCredits.totalCredits,
-      usedCredits: classCredits.usedCredits,
-      expiresAt: classCredits.expiresAt,
-    })
-    .from(classCredits)
-    .innerJoin(products, eq(classCredits.productId, products.id))
-    .where(
-      and(
-        eq(classCredits.userId, userId),
-        sql`${classCredits.usedCredits} < ${classCredits.totalCredits}`,
-        sql`(${classCredits.expiresAt} IS NULL OR ${classCredits.expiresAt} > ${now})`,
-      ),
-    )
-    .orderBy(asc(classCredits.expiresAt));
-
-  return rows.map(toActiveCreditDto);
+  return getStudentCredits(fastify, userId);
 }
 
 export async function adminBookForStudent(
   fastify: FastifyInstance,
   studentId: string,
-  { slotId, creditId }: { slotId: string; creditId: string },
+  { slotId, creditId }: { slotId: string; creditId?: string },
 ) {
   const student = await fastify.drizzle.query.accounts.findFirst({
     where: and(eq(accounts.id, studentId), eq(accounts.isActive, true)),

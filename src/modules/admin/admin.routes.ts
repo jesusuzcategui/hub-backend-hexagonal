@@ -285,13 +285,15 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
   // Admin book on behalf of student
   fastify.get("/admin/students/:id/active-credits", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    reply.send({ data: await listStudentActiveCredits(fastify, id) });
+    const summary = await listStudentActiveCredits(fastify, id);
+    // `data` keeps the legacy array the campus admin reads; balance/nextExpiry/blocks are additive.
+    reply.send({ data: summary.blocks, balance: summary.balance, nextExpiry: summary.nextExpiry, blocks: summary.blocks });
   });
 
   fastify.post("/admin/students/:id/book", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const { slotId, creditId } = (req.body ?? {}) as { slotId?: string; creditId?: string };
-    if (!slotId || !creditId) throw new AppError(400, "MISSING_FIELDS", "slotId and creditId are required");
+    if (!slotId) throw new AppError(400, "MISSING_FIELDS", "slotId is required");
     const data = await adminBookForStudent(fastify, id, { slotId, creditId });
     reply.status(201).send({ data });
   });

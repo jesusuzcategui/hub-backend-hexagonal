@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { AppError } from "../../lib/errors.js";
 import {
   cancelStudentBooking,
   createStudentBooking,
@@ -20,8 +21,9 @@ export async function scheduleRoutes(fastify: FastifyInstance) {
   fastify.get("/schedule/credits", {
     preHandler: [fastify.authenticate],
     handler: async (req, reply) => {
-      const credits = await getStudentCredits(fastify, req.user.sub as string);
-      reply.send({ data: credits });
+      const summary = await getStudentCredits(fastify, req.user.sub as string);
+      // `data` keeps the legacy array shape the campus reads; balance/nextExpiry/blocks are additive.
+      reply.send({ data: summary.blocks, balance: summary.balance, nextExpiry: summary.nextExpiry, blocks: summary.blocks });
     },
   });
 
@@ -38,12 +40,12 @@ export async function scheduleRoutes(fastify: FastifyInstance) {
     handler: async (req, reply) => {
       const { slotId, creditId, notes } = req.body as {
         slotId: string;
-        creditId: string;
+        creditId?: string;
         notes?: string;
       };
 
-      if (!slotId || !creditId) {
-        return reply.code(400).send({ error: "slotId and creditId required" });
+      if (!slotId) {
+        return reply.code(400).send({ error: "slotId required" });
       }
 
       try {
@@ -55,6 +57,9 @@ export async function scheduleRoutes(fastify: FastifyInstance) {
         });
         reply.code(201).send({ data: result });
       } catch (err: unknown) {
+        if (err instanceof AppError) {
+          return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+        }
         const msg = err instanceof Error ? err.message : "Booking failed";
         const code =
           msg.includes("already booked") || msg.includes("No credits") ? 409 : 400;
