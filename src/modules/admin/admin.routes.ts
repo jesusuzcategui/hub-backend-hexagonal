@@ -34,6 +34,7 @@ import {
   listOrders,
   validateTransfer,
   resolveReview,
+  reverifyReview,
   getOrderDetail,
   getOrderProof,
   listCoupons,
@@ -357,6 +358,16 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       const { id } = req.params as { id: string };
       await resolveReview(fastify, id);
       reply.send({ data: { outcome: "resolved" } });
+    },
+  );
+
+  // One ePayco contraste attempt right now; clears the review flag when ePayco's own data matches the order.
+  fastify.post(
+    "/admin/orders/:id/reverify",
+    { preHandler: [fastify.authenticate, requireAdmin] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      reply.send({ data: await reverifyReview(fastify, id) });
     },
   );
 

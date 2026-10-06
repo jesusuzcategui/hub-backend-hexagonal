@@ -488,4 +488,129 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
       expect(o.fulfillmentStatus).toBe("needs_review");
     });
   });
+
+  // ---- admin endpoints -----------------------------------------------------------------------------------------
+
+  describe("admin endpoints", () => {
+    const asAdmin = { "x-user": "00000000-0000-4000-8000-0000000000ad", "x-role": "admin" };
+    const asUser = { "x-user": "00000000-0000-4000-8000-0000000000ee", "x-role": "user" };
+    const post = (url: string, headers: Record<string, string>) => fastify.inject({ method: "POST", url, headers });
+
+    it("reverify is admin only", async () => {
+      const { orderId } = await newFlaggedOrder();
+      fetchMock.mockClear(); // the flagging webhook itself called the (stubbed) contraste
+      const res = await post(`/admin/orders/${orderId}/reverify`, asUser);
+      expect(res.statusCode).toBe(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect((await orderRow(orderId)).fulfillmentStatus).toBe("needs_review");
+    });
+
+    it("reverify answers 404 for an unknown order", async () => {
+      const res = await post(`/admin/orders/00000000-0000-4000-8000-00000000dead/reverify`, asAdmin);
+      expect(res.statusCode).toBe(404);
+    });
+
+    it("reverify clears the flag when ePayco's own data matches", async () => {
+      const { orderId } = await newFlaggedOrder();
+      contraste = { invoice: orderId, amount: String(AMOUNT), currency: "COP" };
+
+      const res = await post(`/admin/orders/${orderId}/reverify`, asAdmin);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ data: { status: "cleared" } });
+      const o = await orderRow(orderId);
+      expect(o.fulfillmentStatus).toBe("delivered");
+      expect(o.reviewReason).toBeNull();
+      expect(await eventKinds(orderId)).toEqual(["flagged", "reverify_cleared"]);
+      expect(mailsToAdmin()).toHaveLength(0);
+    });
+
+    it("reverify reports unavailable and changes nothing while ePayco is still down", async () => {
+      const { orderId } = await newFlaggedOrder();
+      const before = await orderRow(orderId);
+
+      const res = await post(`/admin/orders/${orderId}/reverify`, asAdmin);
+
+      expect(res.json()).toEqual({ data: { status: "unavailable" } });
+      const o = await orderRow(orderId);
+      expect(o.fulfillmentStatus).toBe("needs_review");
+      expect(o.reviewReason).toBe("contraste_unavailable");
+      expect(o.reviewVerifyAttempts).toBe(before.reviewVerifyAttempts); // the manual attempt does not eat the schedule
+      expect(o.reviewNextVerifyAt!.getTime()).toBe(before.reviewNextVerifyAt!.getTime());
+      expect(mailsToAdmin()).toHaveLength(0);
+    });
+
+    it("reverify reports a mismatch, keeps needs_review and alerts admins only once", async () => {
+      const { orderId } = await newFlaggedOrder();
+      contraste = { invoice: orderId, amount: "5", currency: "COP" };
+
+      const first = await post(`/admin/orders/${orderId}/reverify`, asAdmin);
+      const second = await post(`/admin/orders/${orderId}/reverify`, asAdmin);
+
+      expect(first.json()).toEqual({ data: { status: "mismatch" } });
+      expect(second.json()).toEqual({ data: { status: "mismatch" } });
+      const o = await orderRow(orderId);
+      expect(o.fulfillmentStatus).toBe("needs_review");
+      expect(o.reviewReason).toBe("contraste_mismatch");
+      expect(mailsToAdmin()).toHaveLength(1);
+    });
+
+    it("reverify refuses a review caused by a failed grant (ePayco cannot fix that) and a non-review order", async () => {
+      const [dead] = await db
+        .insert(products)
+        .values({ externalId: `${TAG}_dead${seq}`, contentType: "nodus_product", slug: `${TAG}-dead${seq}`, name: "Inactive", metadata: {}, isActive: false })
+        .returning({ id: products.id });
+      productIds.push(dead.id);
+      const failed = await newOpenOrder({ productId: dead.id });
+      await deliverWebhook(failed.orderId, `ref-${seq++}`);
+      const r1 = await post(`/admin/orders/${failed.orderId}/reverify`, asAdmin);
+      expect(r1.statusCode).toBe(409);
+      expect(r1.json().error.code).toBe("REVIEW_NOT_VERIFIABLE");
+
+      const open = await newOpenOrder();
+      fetchMock.mockClear();
+      const r2 = await post(`/admin/orders/${open.orderId}/reverify`, asAdmin);
+      expect(r2.statusCode).toBe(409);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("the existing manual resolve still works, is audited and takes the order out of the cron's reach", async () => {
+      const { orderId, flaggedAt } = await newFlaggedOrder();
+
+      const res = await post(`/admin/orders/${orderId}/resolve-review`, asAdmin);
+
+      expect(res.statusCode).toBe(200);
+      const o = await orderRow(orderId);
+      expect(o.fulfillmentStatus).toBe("delivered");
+      expect(o.reviewNextVerifyAt).toBeNull();
+      expect(o.reviewReason).toBeNull();
+      expect(await eventKinds(orderId)).toEqual(["flagged", "manual_cleared"]);
+      const p = confirms(orderId);
+      expect((await pass(after(flaggedAt, 600), p)).claimed).toBe(0);
+      expect(p.validateTransactionByReference).not.toHaveBeenCalled();
+    });
+
+    it("the admin list and detail payloads carry the raw status plus the review reason, attempts and next attempt (additive)", async () => {
+      const { orderId } = await newFlaggedOrder();
+      const row = await orderRow(orderId);
+
+      const list = await fastify.inject({ method: "GET", url: "/admin/orders?fulfillmentStatus=needs_review", headers: asAdmin });
+      const listed = (list.json().data as Array<Record<string, unknown>>).find((r) => r.id === orderId)!;
+      expect(listed.fulfillmentStatus).toBe("needs_review"); // admins keep the raw value
+      expect(listed.reviewReason).toBe("contraste_unavailable");
+      expect(listed.reviewVerifyAttempts).toBe(0);
+      expect(listed.reviewNextVerifyAt).toBe(row.reviewNextVerifyAt!.toISOString());
+      expect(listed.status).toBe("paid"); // pre-existing fields untouched
+      expect(listed.amountMinor).toBe(AMOUNT);
+
+      const detail = (await fastify.inject({ method: "GET", url: `/admin/orders/${orderId}`, headers: asAdmin })).json().data;
+      expect(detail.order.fulfillmentStatus).toBe("needs_review");
+      expect(detail.order.reviewReason).toBe("contraste_unavailable");
+      expect(detail.order.reviewVerifyAttempts).toBe(0);
+      expect(detail.order.reviewNextVerifyAt).toBe(row.reviewNextVerifyAt!.toISOString());
+      expect(detail.reviewEvents.map((e: { kind: string }) => e.kind)).toEqual(["flagged"]);
+      expect(detail.buyer).toBeTruthy(); // pre-existing fields untouched
+      expect(detail.attempts).toBeTruthy();
+    });
+  });
 });

@@ -19,6 +19,7 @@ import "../../plugins/caldav.js";
 import { adminRescheduleBooking, createStudentBooking, getAvailableSlots, getStudentCredits } from "../schedule/schedule.service.js";
 import { buildBookingCancelledEmail, buildWeeklySlotChangeEmail } from "../schedule/student-emails.js";
 import { resolveGrantExpiry } from "../schedule/credit-balance.js";
+import { reverifyOrder } from "../payments/review-verification.service.js";
 import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer, resolveOrderReview, listPaymentMethods, type PaymentMethod } from "../payments/payments.service.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import { createCart } from "../cart/cart.service.js";
@@ -780,6 +781,10 @@ export async function validateTransfer(
   decision: "approve" | "reject",
 ) {
   return validateManualTransfer(fastify, orderId, decision);
+}
+
+export async function reverifyReview(fastify: FastifyInstance, orderId: string) {
+  return reverifyOrder(fastify, orderId);
 }
 
 export async function resolveReview(fastify: FastifyInstance, orderId: string) {

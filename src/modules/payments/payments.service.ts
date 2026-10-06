@@ -14,7 +14,7 @@ import {
   type Order,
   type WebhookHeaders,
 } from "hexagonal-payments-core";
-import { accounts, carts, coupons, products, passwordResetTokens, paymentMethodSettings } from "../../db/schema";
+import { accounts, carts, coupons, orderReviewEvents, products, passwordResetTokens, paymentMethodSettings } from "../../db/schema";
 import { AppError } from "../../lib/errors";
 import { env } from "../../config/env";
 import { grantCreditsToStudent } from "../admin/admin.service";
@@ -979,8 +979,15 @@ export async function getOrderDetailForAdmin(fastify: FastifyInstance, orderId: 
 
   const latestManualTransferAttempt = attempts.find((a) => a.provider === "manual_transfer");
 
+  const reviewEvents = await fastify.drizzle
+    .select({ kind: orderReviewEvents.kind, detail: orderReviewEvents.detail, createdAt: orderReviewEvents.createdAt })
+    .from(orderReviewEvents)
+    .where(eq(orderReviewEvents.orderId, orderId))
+    .orderBy(orderReviewEvents.createdAt);
+
   return {
     order,
+    reviewEvents,
     buyer: buyer ?? null,
     attempts,
     productName,
@@ -1052,6 +1059,13 @@ export async function resolveOrderReview(fastify: FastifyInstance, orderId: stri
   }
 
   await orderRepo.save(order.transitionFulfillment("delivered", clock.now()));
+  // Leaves the cron's reach and keeps an audit trail of the manual decision.
+  const { orders: ordersTable } = await import("../../db/schema");
+  await fastify.drizzle
+    .update(ordersTable)
+    .set({ reviewReason: null, reviewNextVerifyAt: null })
+    .where(eq(ordersTable.id, orderId));
+  await recordReviewEvent(fastify.drizzle, orderId, "manual_cleared", {});
 }
 
 export async function validateManualTransfer(
