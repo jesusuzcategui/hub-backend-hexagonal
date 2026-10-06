@@ -8,6 +8,8 @@ import {
   listStudentBookings,
   rescheduleStudentBooking,
 } from "./schedule.service.js";
+import { cancelSeries, createSeries, listSeries, previewSeries } from "./series.service.js";
+import { splitSeriesRequest } from "./series.js";
 
 export async function scheduleRoutes(fastify: FastifyInstance) {
   fastify.get("/schedule/slots", {
@@ -102,6 +104,39 @@ export async function scheduleRoutes(fastify: FastifyInstance) {
         const code = msg.includes("not found") ? 404 : msg.includes("already booked") || msg.includes("blocked") ? 409 : 400;
         reply.code(code).send({ error: msg });
       }
+    },
+  });
+
+  // ---- Recurring series (students act only on their own series; the id always comes from the token) ----
+  fastify.post("/schedule/series/preview", {
+    preHandler: [fastify.authenticate],
+    handler: async (req, reply) => {
+      const { rule } = splitSeriesRequest(req.body);
+      reply.send({ data: await previewSeries(fastify, { studentId: req.user.sub as string, rule }) });
+    },
+  });
+
+  fastify.post("/schedule/series", {
+    preHandler: [fastify.authenticate],
+    handler: async (req, reply) => {
+      const { rule, skipConflicts } = splitSeriesRequest(req.body);
+      const userId = req.user.sub as string;
+      reply.code(201).send({ data: await createSeries(fastify, { studentId: userId, createdBy: userId, rule, skipConflicts }) });
+    },
+  });
+
+  fastify.get("/schedule/series", {
+    preHandler: [fastify.authenticate],
+    handler: async (req, reply) => {
+      reply.send({ data: await listSeries(fastify, req.user.sub as string) });
+    },
+  });
+
+  fastify.delete("/schedule/series/:id", {
+    preHandler: [fastify.authenticate],
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      reply.send({ data: await cancelSeries(fastify, { seriesId: id, actor: { role: "student", userId: req.user.sub as string } }) });
     },
   });
 }

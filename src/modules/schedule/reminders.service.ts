@@ -15,7 +15,7 @@ import {
 } from "./reminders.js";
 
 const HOUR_MS = 3_600_000;
-const DEFAULT_CAMPUS_URL = "https://campus.jesusuzcategui.com";
+export const DEFAULT_CAMPUS_URL = "https://campus.jesusuzcategui.com";
 
 export interface ReminderSummary {
   dryRun: boolean;

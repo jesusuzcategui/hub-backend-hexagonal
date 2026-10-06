@@ -238,3 +238,15 @@ export function allocateCredits<T extends CreditBlockLike & { id: string }>(
   }
   return { creditIds, complete: creditIds.length === n };
 }
+
+/** Splits a request body into the rule (validated) and the `skipConflicts` flag (default false). */
+export function splitSeriesRequest(body: unknown): { rule: SeriesRule; skipConflicts: boolean } {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new AppError(400, "VALIDATION_ERROR", "Request body must be a JSON object");
+  }
+  const { skipConflicts, ...rest } = body as Record<string, unknown>;
+  if (skipConflicts !== undefined && typeof skipConflicts !== "boolean") {
+    throw new AppError(400, "VALIDATION_ERROR", "skipConflicts must be a boolean");
+  }
+  return { rule: validateSeriesRule(rest), skipConflicts: skipConflicts === true };
+}

@@ -5,6 +5,7 @@ import {
   allocateCredits,
   classifyOccurrences,
   generateOccurrences,
+  splitSeriesRequest,
   validateSeriesRule,
   type ClassifyContext,
   type SeriesRule,
@@ -312,5 +313,17 @@ describe("allocateCredits", () => {
     expect(allocateCredits([], 0, NOW)).toEqual({ creditIds: [], complete: true });
     const out = allocateCredits([mk("never", 1, 0, null, 1), mk("dated", 1, 0, 3, 1)], 2, NOW);
     expect(out.creditIds).toEqual(["dated", "never"]);
+  });
+});
+
+describe("splitSeriesRequest", () => {
+  it("separates skipConflicts (default false) from the rule fields", () => {
+    expect(splitSeriesRequest(rule())).toEqual({ rule: rule(), skipConflicts: false });
+    expect(splitSeriesRequest({ ...rule(), skipConflicts: true })).toEqual({ rule: rule(), skipConflicts: true });
+  });
+
+  it("rejects a non-boolean skipConflicts and a missing body", () => {
+    expectValidation(() => splitSeriesRequest({ ...rule(), skipConflicts: "yes" }), "skipConflicts");
+    expectValidation(() => splitSeriesRequest(undefined));
   });
 });

@@ -1,5 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { AppError } from "../../lib/errors";
+import { cancelSeries, createSeries, listSeries, previewSeries } from "../schedule/series.service";
+import { splitSeriesRequest } from "../schedule/series";
 import { listUpcomingReminders, runReminderPass } from "../schedule/reminders.service";
 import {
   listStudents,
@@ -297,6 +299,30 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     if (!slotId) throw new AppError(400, "MISSING_FIELDS", "slotId is required");
     const data = await adminBookForStudent(fastify, id, { slotId, creditId });
     reply.status(201).send({ data });
+  });
+
+  // Recurring series on behalf of a student (admin has no 24h cancel cutoff)
+  fastify.post("/admin/students/:id/series/preview", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { rule } = splitSeriesRequest(req.body);
+    reply.send({ data: await previewSeries(fastify, { studentId: id, rule }) });
+  });
+
+  fastify.post("/admin/students/:id/series", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { rule, skipConflicts } = splitSeriesRequest(req.body);
+    const data = await createSeries(fastify, { studentId: id, createdBy: req.user.sub as string, rule, skipConflicts });
+    reply.status(201).send({ data });
+  });
+
+  fastify.get("/admin/students/:id/series", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    reply.send({ data: await listSeries(fastify, id) });
+  });
+
+  fastify.delete("/admin/series/:id", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    reply.send({ data: await cancelSeries(fastify, { seriesId: id, actor: { role: "admin" } }) });
   });
 
   // Available slots (reused from schedule module)
