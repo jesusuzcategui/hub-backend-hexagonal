@@ -10,14 +10,16 @@ const journal = JSON.parse(readFileSync(join(root, "meta", "_journal.json"), "ut
 
 describe("migration 0017_booking_series", () => {
   it("is registered right after 0016 with a strictly greater `when`", () => {
-    const last = journal.entries[journal.entries.length - 1];
-    expect(last.tag).toBe("0017_booking_series");
-    expect(last.idx).toBe(17);
-    const prev = journal.entries[journal.entries.length - 2];
+    // Looked up by tag, not "last entry": later migrations are appended after it.
+    const idx = journal.entries.findIndex((e: { tag: string }) => e.tag === "0017_booking_series");
+    expect(idx).toBe(17);
+    const entry = journal.entries[idx];
+    expect(entry.idx).toBe(17);
+    const prev = journal.entries[idx - 1];
     expect(prev.tag).toBe("0016_class_reminders");
-    expect(last.when).toBeGreaterThan(prev.when);
-    const maxOther = Math.max(...journal.entries.slice(0, -1).map((e: { when: number }) => e.when));
-    expect(last.when).toBeGreaterThan(maxOther);
+    expect(entry.when).toBeGreaterThan(prev.when);
+    const maxEarlier = Math.max(...journal.entries.slice(0, idx).map((e: { when: number }) => e.when));
+    expect(entry.when).toBeGreaterThan(maxEarlier);
   });
 
   it("creates scheduling.booking_series with the agreed columns", () => {
