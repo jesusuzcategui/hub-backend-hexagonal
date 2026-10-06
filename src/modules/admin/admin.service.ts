@@ -912,8 +912,12 @@ export async function createBlockedSlot(
 
 export async function deleteBlockedSlot(fastify: FastifyInstance, id: string) {
   const db = fastify.drizzle;
-  const block = await db.query.blockedSlots.findFirst({ where: eq(blockedSlots.id, id), columns: { id: true } });
+  const block = await db.query.blockedSlots.findFirst({ where: eq(blockedSlots.id, id), columns: { id: true, source: true } });
   if (!block) throw new AppError(404, "BLOCK_NOT_FOUND", "Blocked slot not found");
+  // A mirrored Nextcloud block would be recreated by the next sync: it has to be changed in the calendar.
+  if (block.source === "caldav") {
+    throw new AppError(409, "CALDAV_BLOCK", "This block mirrors a Nextcloud calendar event; remove or change the event in the calendar");
+  }
   await db.delete(blockedSlots).where(eq(blockedSlots.id, id));
 }
 

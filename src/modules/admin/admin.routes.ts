@@ -3,6 +3,7 @@ import { AppError } from "../../lib/errors";
 import { cancelSeries, createSeries, listSeries, previewSeries } from "../schedule/series.service";
 import { splitSeriesRequest } from "../schedule/series";
 import { listUpcomingReminders, runReminderPass } from "../schedule/reminders.service";
+import { getSyncStatus, listCalendarConflicts, runCalDavSync } from "../calendar-sync/calendar-sync.service";
 import {
   listStudents,
   getStudent,
@@ -184,6 +185,23 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
     await deleteBlockedSlot(fastify, id);
     reply.send({ data: { deleted: true } });
+  });
+
+  // Nextcloud busy-time sync (see modules/calendar-sync). Runs, status and the bookings a new block collides with.
+  fastify.post("/admin/calendar-sync/run", { preHandler: [fastify.authenticate, requireAdmin] }, async (req, reply) => {
+    const body = (req.body ?? {}) as { dryRun?: unknown };
+    if (body.dryRun !== undefined && typeof body.dryRun !== "boolean") {
+      throw new AppError(400, "VALIDATION_ERROR", "dryRun must be a boolean");
+    }
+    reply.send({ data: await runCalDavSync(fastify, { dryRun: body.dryRun === true, trigger: "manual" }) });
+  });
+
+  fastify.get("/admin/calendar-sync/status", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
+    reply.send({ data: await getSyncStatus(fastify) });
+  });
+
+  fastify.get("/admin/calendar-sync/conflicts", { preHandler: [fastify.authenticate, requireAdmin] }, async (_req, reply) => {
+    reply.send({ data: await listCalendarConflicts(fastify) });
   });
 
   // Availabilities
