@@ -120,6 +120,13 @@
       "when": 1791331200000,
       "tag": "0016_class_reminders",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791417600000,
+      "tag": "0017_booking_series",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,6 @@
 import {
   boolean,
+  date,
   index,
   jsonb,
   pgSchema,
@@ -86,6 +87,29 @@ export const classCredits = schedulingSchema.table(
   (table) => [index("idx_class_credits_user_id").on(table.userId)],
 );
 
+// A recurring-class series. Occurrences are ordinary bookings (series_id set); all credits are
+// deducted at creation. `pattern` is [{ weekday: 0-6 (0 = Sunday), time: "HH:MM" }].
+export const bookingSeries = schedulingSchema.table(
+  "booking_series",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => accounts.id),
+    pattern: jsonb("pattern").notNull(),
+    intervalWeeks: smallint("interval_weeks").notNull(),
+    startDate: date("start_date").notNull(),
+    requestedOccurrences: smallint("requested_occurrences").notNull(),
+    createdOccurrences: smallint("created_occurrences").notNull(),
+    status: text("status").notNull().default("active"), // active | cancelled
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("idx_booking_series_student_id").on(table.studentId)],
+);
+
 export const bookings = schedulingSchema.table(
   "bookings",
   {
@@ -103,6 +127,7 @@ export const bookings = schedulingSchema.table(
     productId: uuid("product_id")
       .notNull()
       .references(() => products.id, { onDelete: "restrict" }),
+    seriesId: uuid("series_id").references(() => bookingSeries.id, { onDelete: "set null" }),
     status: bookingStatusEnum("status").notNull().default("pending"),
     gcalEventId: text("gcal_event_id"),
     meetLink: text("meet_link"),
@@ -122,6 +147,7 @@ export const bookings = schedulingSchema.table(
     index("idx_bookings_weekly_slot_id").on(table.weeklySlotId),
     index("idx_bookings_starts_at").on(table.startsAt),
     index("idx_bookings_status").on(table.status),
+    index("idx_bookings_series_id").on(table.seriesId),
     index("idx_bookings_reminder_scan")
       .on(table.startsAt)
       .where(sql`${table.status} = 'confirmed'`),
