@@ -28,6 +28,8 @@ import { ManualTransferProvider } from "../../adapters/payments/manual-transfer-
 import { getOrderKindRegistry, CLASS_CREDIT_PLAN_KIND, CLASS_CREDIT_PLAN_VERSION } from "./kind-registry";
 import { epaycoStatusMapper, paypalStatusMapper, manualTransferStatusMapper } from "./provider-status-mappers";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template";
+import { contrasteMatchesOrder, studentFacingFulfillment, parseVerifySchedule } from "./review-verification";
+import { flagOrderForReview, recordReviewEvent } from "./review-store";
 
 export type PaymentMethod = "epayco" | "paypal" | "manual_transfer";
 
@@ -373,6 +375,10 @@ export async function getPublicOrderStatus(
     locale?: "en" | "es";
     items?: Array<{ customLabel?: string }>;
   } | null;
+  const fulfillmentStatus = studentFacingFulfillment({
+    fulfillmentStatus: order.fulfillmentStatus,
+    reviewReason: row?.reviewReason,
+  });
 
   let productName: string | null = null;
   if (metadata?.productId) {
@@ -393,7 +399,7 @@ export async function getPublicOrderStatus(
   return {
     orderId: order.id,
     status: order.status,
-    fulfillmentStatus: order.fulfillmentStatus,
+    fulfillmentStatus,
     currency: order.currency,
     amountMinor: order.amountMinor,
     paidAt: order.paidAt ? order.paidAt.toISOString() : null,
@@ -467,10 +473,19 @@ export async function attachManualTransferProof(
 // Factored into one function per the task's instruction: grant credits + email + Umami
 // + coupon redemption must not be duplicated across the epayco webhook, paypal webhook,
 // and admin validate-transfer endpoint.
+/**
+ * `forceNeedsReview`: ePayco's contraste was unavailable at webhook time. `contrasteRef` is the ePayco
+ * reference (x_ref_payco) the automatic re-verification will ask ePayco about later.
+ */
+interface SettlementOptions {
+  forceNeedsReview?: boolean;
+  contrasteRef?: string;
+}
+
 async function applySettlementSideEffects(
   fastify: FastifyInstance,
   order: Order,
-  options?: { forceNeedsReview?: boolean },
+  options?: SettlementOptions,
 ): Promise<void> {
   const orderRepo = new DrizzleOrderRepository(fastify.drizzle);
   const row = await orderRepo.findRowById(order.id);
@@ -538,17 +553,31 @@ async function applySettlementSideEffects(
         await orderRepo.save(fresh.transitionFulfillment(target, clock.now()));
       }
       if (target === "needs_review") {
-        const reason = options?.forceNeedsReview
-          ? "ePayco no pudo confirmar la transacción server-to-server (endpoint de contraste caído) — el pago igual se marcó pagado y los créditos ya fueron otorgados."
-          : "El otorgamiento de créditos o acceso falló al momento de liquidar el pago.";
-        await notifyAdminsOfReviewNeeded(fastify, {
-          orderId: order.id,
-          buyerName: account.displayName,
-          buyerEmail: account.email,
-          amountMinor: order.amountMinor,
-          currency: order.currency,
-          reason,
-        });
+        // A failed grant is a REAL problem and wins over "contraste unavailable": it alerts admins right away
+        // and the cron never touches it. When the grants landed and only ePayco's contraste was unavailable,
+        // the student already has credits + the success email, so admins are only alerted if the automatic
+        // re-verification later finds a mismatch or gives up (see review-verification.service.ts).
+        const grantsFailed = !(creditsGranted && contentAccessGranted);
+        const flagNow = clock.now();
+        if (grantsFailed) {
+          await flagOrderForReview(fastify.drizzle, { orderId: order.id, reason: "fulfillment_failed", now: flagNow, alerted: true });
+          await notifyAdminsOfReviewNeeded(fastify, {
+            orderId: order.id,
+            buyerName: account.displayName,
+            buyerEmail: account.email,
+            amountMinor: order.amountMinor,
+            currency: order.currency,
+            reason: "El otorgamiento de créditos o acceso falló al momento de liquidar el pago.",
+          });
+        } else {
+          await flagOrderForReview(fastify.drizzle, {
+            orderId: order.id,
+            reason: "contraste_unavailable",
+            providerRef: options?.contrasteRef ?? null,
+            now: flagNow,
+            schedule: parseVerifySchedule(process.env),
+          });
+        }
       }
     } catch (err) {
       fastify.log.error({ err, orderId: order.id }, "Failed to update fulfillment status after settlement");
@@ -656,7 +685,7 @@ async function applySettlementSideEffects(
  * (env.campus.adminNotificationEmail) takes priority, falls back to every
  * active admin account.
  */
-async function notifyAdminsOfReviewNeeded(
+export async function notifyAdminsOfReviewNeeded(
   fastify: FastifyInstance,
   info: { orderId: string; buyerName: string; buyerEmail: string; amountMinor: number; currency: string; reason: string },
 ): Promise<void> {
@@ -705,7 +734,7 @@ async function notifyAdminsOfReviewNeeded(
 async function handleSettlementResult(
   fastify: FastifyInstance,
   result: SettlementResult,
-  options?: { forceNeedsReview?: boolean },
+  options?: SettlementOptions,
 ): Promise<void> {
   if (result.outcome === "applied" && result.order?.isPaid()) {
     await applySettlementSideEffects(fastify, result.order, options);
@@ -756,17 +785,12 @@ export async function handleEpaycoWebhook(
   let contrasteUnavailable = false;
   try {
     const contraste = await provider.validateTransactionByReference(parsed.providerEventId);
-    // Invoice always has to match — weakest, always-required correlation.
-    const invoiceMatches = contraste.invoice === orderForContraste.id;
-    // Amount/currency are only asserted when the webhook claims the payment
-    // was actually accepted — forging a "rejected"/"pending" webhook with a
-    // mismatched amount moves no money and grants nothing, so being strict
-    // there only breaks legitimate decline notifications (confirmed by a
-    // real ePayco test transaction where that happened).
+    // Invoice always has to match; amount/currency are only asserted when the webhook claims the payment was
+    // actually accepted — forging a "rejected"/"pending" webhook with a mismatched amount moves no money and
+    // grants nothing, so being strict there only breaks legitimate decline notifications (confirmed by a real
+    // ePayco test transaction where that happened). Shared with the re-verification (review-verification.ts).
     const isApproved = parsed.status === "Aceptada";
-    const amountMatches = !isApproved || contraste.amountMinor === orderForContraste.amountMinor;
-    const currencyMatches = !isApproved || contraste.currency === orderForContraste.currency.toUpperCase();
-    if (!invoiceMatches || !amountMatches || !currencyMatches) {
+    if (!contrasteMatchesOrder(contraste, orderForContraste, { isApproved })) {
       fastify.log.error(
         { contraste, orderId: orderForContraste.id, orderAmount: orderForContraste.amountMinor, orderCurrency: orderForContraste.currency, status: parsed.status },
         "ePayco contraste mismatch — refusing to settle",
@@ -789,7 +813,10 @@ export async function handleEpaycoWebhook(
     { rawBody, headers, provider },
     { orderRepository, paymentAttemptRepository, paymentEventStore, clock, idGenerator, mapProviderStatus: epaycoStatusMapper },
   );
-  await handleSettlementResult(fastify, result, { forceNeedsReview: contrasteUnavailable });
+  await handleSettlementResult(fastify, result, {
+    forceNeedsReview: contrasteUnavailable,
+    contrasteRef: contrasteUnavailable ? parsed.providerEventId : undefined,
+  });
   return result;
 }
 
@@ -836,6 +863,7 @@ export async function listOrdersForStudent(fastify: FastifyInstance, userId: str
       currency: ordersTable.currency,
       status: ordersTable.status,
       fulfillmentStatus: ordersTable.fulfillmentStatus,
+      reviewReason: ordersTable.reviewReason,
       paidAt: ordersTable.paidAt,
       createdAt: ordersTable.createdAt,
       metadata: ordersTable.metadata,
@@ -875,7 +903,8 @@ export async function listOrdersForStudent(fastify: FastifyInstance, userId: str
       amountMinor: r.amountMinor,
       currency: r.currency,
       status: r.status,
-      fulfillmentStatus: r.fulfillmentStatus,
+      // Students never see "needs verification" when the only reason is ePayco's contraste being unavailable.
+      fulfillmentStatus: studentFacingFulfillment({ fulfillmentStatus: r.fulfillmentStatus, reviewReason: r.reviewReason }),
       paidAt: r.paidAt,
       createdAt: r.createdAt,
       productName: (metadata?.productId ? nameById.get(metadata.productId) : undefined) ?? metadata?.items?.[0]?.customLabel ?? null,
