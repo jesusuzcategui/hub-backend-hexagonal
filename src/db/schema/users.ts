@@ -18,6 +18,8 @@ export const accounts = usersSchema.table(
     emailVerified: boolean("email_verified").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
     status: accountStatusEnum("status").notNull().default("active"),
+    // Student language for transactional emails (es | en). CHECK constraint lives in migration 0016.
+    locale: text("locale").$type<"es" | "en">().notNull().default("es"),
     suspendedAt: timestamp("suspended_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

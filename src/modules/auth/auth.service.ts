@@ -44,6 +44,7 @@ export async function registerUser(
       email: input.email.toLowerCase(),
       passwordHash,
       displayName: input.displayName,
+      locale: input.locale,
     })
     .returning({ id: accounts.id, role: accounts.role });
 

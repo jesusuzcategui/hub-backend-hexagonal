@@ -3,6 +3,7 @@ import { z } from "zod";
 export const updateProfileSchema = z.object({
   displayName: z.string().min(1).max(100).optional(),
   avatarUrl: z.string().url().optional(),
+  locale: z.enum(["es", "en"]).optional(),
 });
 
 export const changeRoleSchema = z.object({

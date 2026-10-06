@@ -16,6 +16,7 @@ export async function getProfile(fastify: FastifyInstance, userId: string) {
       avatarUrl: true,
       role: true,
       emailVerified: true,
+      locale: true,
       createdAt: true,
     },
   });
@@ -34,7 +35,7 @@ export async function updateProfile(
 ) {
   const db = fastify.drizzle;
 
-  if (!input.displayName && !input.avatarUrl) {
+  if (!input.displayName && !input.avatarUrl && !input.locale) {
     throw new AppError(400, "NOTHING_TO_UPDATE", "Provide at least one field to update");
   }
 
@@ -43,6 +44,7 @@ export async function updateProfile(
     .set({
       ...(input.displayName && { displayName: input.displayName }),
       ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
+      ...(input.locale && { locale: input.locale }),
       updatedAt: new Date(),
     })
     .where(eq(accounts.id, userId))
@@ -53,6 +55,7 @@ export async function updateProfile(
       avatarUrl: accounts.avatarUrl,
       role: accounts.role,
       emailVerified: accounts.emailVerified,
+      locale: accounts.locale,
       createdAt: accounts.createdAt,
     });
 

@@ -137,7 +137,7 @@ export async function meController(
 ): Promise<void> {
   const account = await request.server.drizzle.query.accounts.findFirst({
     where: (a, { eq }) => eq(a.id, request.user.sub),
-    columns: { displayName: true, email: true },
+    columns: { displayName: true, email: true, locale: true },
   });
   reply.status(200).send({
     data: {
@@ -145,6 +145,7 @@ export async function meController(
       role: request.user.role,
       displayName: account?.displayName ?? null,
       email: account?.email ?? null,
+      locale: account?.locale ?? "es",
     },
   });
 }

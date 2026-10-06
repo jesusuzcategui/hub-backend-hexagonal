@@ -109,7 +109,9 @@ export const bookings = schedulingSchema.table(
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
     endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
     studentNotes: text("student_notes"),
-    reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
+    reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }), // legacy, unused
+    reminder24hSentAt: timestamp("reminder_24h_sent_at", { withTimezone: true }),
+    reminder1hSentAt: timestamp("reminder_1h_sent_at", { withTimezone: true }),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     cancelReason: text("cancel_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -120,6 +122,9 @@ export const bookings = schedulingSchema.table(
     index("idx_bookings_weekly_slot_id").on(table.weeklySlotId),
     index("idx_bookings_starts_at").on(table.startsAt),
     index("idx_bookings_status").on(table.status),
+    index("idx_bookings_reminder_scan")
+      .on(table.startsAt)
+      .where(sql`${table.status} = 'confirmed'`),
   ],
 );
 
