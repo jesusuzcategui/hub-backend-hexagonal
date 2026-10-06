@@ -36,7 +36,7 @@ export async function portfolioRoutes(fastify: FastifyInstance): Promise<void> {
       reply.code(201).send({ data: result });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Booking failed";
-      const code = msg.includes("already booked") ? 409 : msg.includes("not found") ? 404 : msg.includes("Captcha") ? 400 : 400;
+      const code = msg.includes("already booked") || msg.includes("is blocked") ? 409 : msg.includes("not found") ? 404 : msg.includes("Captcha") ? 400 : 400;
       console.log("error: ", err, code);
       reply.code(code).send({ error: msg });
     }

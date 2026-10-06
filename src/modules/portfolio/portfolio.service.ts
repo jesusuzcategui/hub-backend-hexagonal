@@ -2,7 +2,7 @@ import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { env } from "../../config/env.js";
 import { AppError } from "../../lib/errors.js";
-import { bookings, mentoringRequests, weeklySlots } from "../../db/schema/scheduling.js";
+import { blockedSlots, bookings, mentoringRequests, weeklySlots } from "../../db/schema/scheduling.js";
 import type { BookSlotBody, SubmitReviewBody } from "./portfolio.schemas.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import "../../plugins/caldav.js";
@@ -200,13 +200,22 @@ export async function getPublicSlots(fastify: FastifyInstance) {
     takenKeys.add(m.slotId);
   }
 
+  // Blocked time (manual blocks and the Nextcloud busy-time mirror) closes the slot here exactly as it does for
+  // students. Same overlap rule as the student listing; deliberately not filtered by teacher, like every other
+  // consumer, because manual blocks carry the id of the admin who created them.
+  const blocks = await fastify.drizzle
+    .select({ startsAt: blockedSlots.startsAt, endsAt: blockedSlots.endsAt })
+    .from(blockedSlots)
+    .where(gt(blockedSlots.endsAt, new Date()));
+  const overlapsBlock = (startsAt: Date, endsAt: Date) => blocks.some((b) => startsAt < b.endsAt && endsAt > b.startsAt);
+
   const available: Array<{ id: string; startsAt: string; endsAt: string }> = [];
 
   for (const slot of slots) {
     const occurrences = upcomingOccurrences(slot.dayOfWeek, slot.startTime, slot.endTime, 6);
     for (const occ of occurrences) {
       const key = `${slot.id}_${occ.slotDate}_${occ.chunkHHMM}`;
-      if (!takenKeys.has(key)) {
+      if (!takenKeys.has(key) && !overlapsBlock(occ.startsAt, occ.endsAt)) {
         available.push({ id: key, startsAt: occ.startsAt.toISOString(), endsAt: occ.endsAt.toISOString() });
       }
     }
@@ -262,6 +271,14 @@ export async function createMentoringRequest(fastify: FastifyInstance, body: Boo
   let requestId: string;
 
   await fastify.drizzle.transaction(async (tx) => {
+    // The listing hides blocked slots, but a stale page or a hand-built slotId must not get through either.
+    const [block] = await tx
+      .select({ id: blockedSlots.id })
+      .from(blockedSlots)
+      .where(and(sql`${blockedSlots.startsAt} < ${endsAt}`, sql`${blockedSlots.endsAt} > ${startsAt}`))
+      .limit(1);
+    if (block) throw new Error("Slot is blocked");
+
     // Race check: ClickTalk booking on same slot + time
     const [existingBooking] = await tx
       .select({ id: bookings.id })
