@@ -37,6 +37,26 @@ describe("POST /auth/register", () => {
     expect(cookie).not.toBeNull();
   });
 
+  it.each([
+    ["en", "en"],
+    ["es", "es"],
+    ["fr", "es"],
+    [undefined, "es"],
+  ])("stores locale %s as %s and exposes it on /auth/me", async (sent, stored) => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/auth/register",
+      payload: { email: TEST_EMAIL, password: TEST_PASSWORD, displayName: TEST_NAME, locale: sent },
+    });
+    expect(res.statusCode).toBe(201);
+    const me = await app.inject({
+      method: "GET",
+      url: "/auth/me",
+      headers: { authorization: `Bearer ${res.json().data.accessToken}` },
+    });
+    expect(me.json().data.locale).toBe(stored);
+  });
+
   it("returns 409 when email already registered", async () => {
     await app.inject({
       method: "POST",

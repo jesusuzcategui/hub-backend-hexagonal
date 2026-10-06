@@ -106,6 +106,26 @@ describe("PATCH /users/me", () => {
   });
 });
 
+describe("PATCH /users/me locale", () => {
+  const patch = (payload: unknown) =>
+    app.inject({ method: "PATCH", url: "/users/me", headers: { authorization: `Bearer ${userToken}` }, payload: payload as object });
+
+  it("changes the language and returns it in the profile", async () => {
+    const res = await patch({ locale: "en" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.locale).toBe("en");
+    const me = await app.inject({ method: "GET", url: "/users/me", headers: { authorization: `Bearer ${userToken}` } });
+    expect(me.json().data.locale).toBe("en");
+    expect((await patch({ locale: "es" })).json().data.locale).toBe("es");
+  });
+
+  it("rejects an unsupported language with 400", async () => {
+    const res = await patch({ locale: "fr" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("VALIDATION_ERROR");
+  });
+});
+
 describe("GET /users (admin)", () => {
   it("returns user list for admin", async () => {
     const res = await app.inject({

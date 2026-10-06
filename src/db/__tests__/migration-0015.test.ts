@@ -15,12 +15,12 @@ function at(re: RegExp): number {
 }
 
 describe("migration 0015_wp_product_source", () => {
-  it("is registered in the journal after every other migration (highest `when`)", () => {
-    const last = journal.entries[journal.entries.length - 1];
-    expect(last.tag).toBe("0015_wp_product_source");
-    expect(last.idx).toBe(15);
-    const maxOther = Math.max(...journal.entries.slice(0, -1).map((e: { when: number }) => e.when));
-    expect(last.when).toBeGreaterThan(maxOther);
+  it("is registered in the journal after every earlier migration (highest `when` up to idx 15)", () => {
+    const entry = journal.entries[15];
+    expect(entry.tag).toBe("0015_wp_product_source");
+    expect(entry.idx).toBe(15);
+    const maxEarlier = Math.max(...journal.entries.slice(0, 15).map((e: { when: number }) => e.when));
+    expect(entry.when).toBeGreaterThan(maxEarlier);
   });
 
   it("re-points content_access BEFORE overwriting products ids and before any rename", () => {
