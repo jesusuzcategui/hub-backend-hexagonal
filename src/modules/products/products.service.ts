@@ -22,7 +22,11 @@ function mapWpToDb(p: WpProduct) {
   };
 }
 
-export async function syncProductFromWp(fastify: FastifyInstance, wpProduct: WpProduct): Promise<void> {
+export async function syncProductFromWp(
+  fastify: FastifyInstance,
+  wpProduct: WpProduct,
+  { invalidate = true }: { invalidate?: boolean } = {},
+): Promise<void> {
   const values = mapWpToDb(wpProduct);
 
   await fastify.drizzle
@@ -30,11 +34,11 @@ export async function syncProductFromWp(fastify: FastifyInstance, wpProduct: WpP
     .values(values)
     .onConflictDoUpdate({ target: products.externalId, set: values });
 
-  await invalidateProductCache(fastify);
+  if (invalidate) await invalidateProductCache(fastify);
 }
 
 // Every writer of the products table must call this (today: syncProductFromWp and syncAllProducts, which is
-// what both the WordPress webhook and POST /admin/products/sync run). TTLs are the backstop for a missed call.
+// what both the WordPress webhook and POST /admin/products/sync run; syncAllProducts invalidates once, at the end). TTLs are the backstop for a missed call.
 export async function invalidateProductCache(fastify: FastifyInstance): Promise<void> {
   await invalidatePrefix(getCache(fastify), CacheKeys.productsPrefix);
 }
@@ -52,7 +56,7 @@ export async function syncAllProducts(
   if (wpProducts.length === 0) return 0;
 
   try {
-    await Promise.all(wpProducts.map((p) => syncProductFromWp(fastify, p)));
+    await Promise.all(wpProducts.map((p) => syncProductFromWp(fastify, p, { invalidate: false })));
 
     await fastify.drizzle
       .update(products)

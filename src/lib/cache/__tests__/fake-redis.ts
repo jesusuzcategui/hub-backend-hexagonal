@@ -40,12 +40,12 @@ export class FakeRedis implements RedisLike {
     for (const k of keys) if (this.store.delete(k)) n++;
     return n;
   }
-  async scan(_cursor: string, _m: "MATCH", pattern: string, _c: "COUNT", _n: number): Promise<[string, string[]]> {
+  async incr(key: string) {
     await this.gate();
-    // Supports the only glob the adapter emits: an escaped literal followed by a trailing '*'.
-    const literal = pattern.slice(0, -1).replace(/\\(.)/g, "$1");
-    const keys = [...this.store.keys()].filter((k) => k.startsWith(literal) && this.live(k));
-    return ["0", keys];
+    const e = this.live(key);
+    const next = Number(e?.value ?? 0) + 1;
+    this.store.set(key, { value: String(next), expiresAt: e?.expiresAt ?? null });
+    return next;
   }
   /** Emulates the rate-limit INCR script (fixed window). */
   async eval(_script: string, _numKeys: number, ...args: (string | number)[]) {

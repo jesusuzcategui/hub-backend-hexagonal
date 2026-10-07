@@ -1,6 +1,6 @@
 import type { RateLimitPluginOptions } from "@fastify/rate-limit";
 import type { RedisGuard } from "./guard";
-import type { RedisLike } from "./types";
+import type { CacheLogger, RedisLike } from "./types";
 
 /**
  * Shared rate-limit store for @fastify/rate-limit (its `store` option), fixed-window counters like the
@@ -36,6 +36,8 @@ export interface RateLimitStoreDeps {
   namespace: string;
   /** Separates registrations: without it every @fastify/rate-limit registration would share one counter per IP. */
   scope?: string;
+  /** Receives a throttled warning when a scope has to count per process because Redis is unavailable. */
+  log?: Pick<CacheLogger, "warn">;
   maxLocalKeys?: number;
   now?: () => number;
 }
@@ -51,6 +53,14 @@ export type RateLimitStoreClass = NonNullable<RateLimitPluginOptions["store"]>;
 export function createRateLimitStore(deps: RateLimitStoreDeps): RateLimitStoreClass {
   const now = deps.now ?? Date.now;
   const maxLocalKeys = deps.maxLocalKeys ?? 5000;
+  const WARN_EVERY_MS = 30_000;
+  let lastWarn = Number.NEGATIVE_INFINITY;
+  const warnLocal = () => {
+    const t = now();
+    if (t - lastWarn < WARN_EVERY_MS) return;
+    lastWarn = t;
+    deps.log?.warn(`rate-limit[${deps.scope ?? "default"}]: redis unavailable, counting per process (limits are per instance until it recovers)`);
+  };
 
   class Store implements RateLimitStoreInstance {
     private readonly local = new Map<string, Counter>();
@@ -84,7 +94,7 @@ export function createRateLimitStore(deps: RateLimitStoreDeps): RateLimitStoreCl
           const res = (await guard.run(() => client.eval(INCR_SCRIPT, 1, this.keyPrefix + key, timeWindow))) as [number, number];
           return { current: Number(res[0]), ttl: Number(res[1]) };
         } catch {
-          // fall through to the in-memory counter
+          warnLocal();
         }
       }
       return this.localIncr(key, timeWindow);
@@ -106,7 +116,8 @@ export function createRateLimitStore(deps: RateLimitStoreDeps): RateLimitStoreCl
       return { current: c.current, ttl: timeWindow - (now() - c.startedAt) };
     }
 
-    private localIncr(key: string, timeWindow: number): { current: number; ttl: number } {
+    /** @internal exposed for tests */
+    localIncr(key: string, timeWindow: number): { current: number; ttl: number } {
       const t = now();
       let c = this.local.get(key);
       if (!c || c.startedAt + timeWindow <= t) {

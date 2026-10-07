@@ -3,44 +3,66 @@ import { RedisGuard } from "./guard";
 import type { Cache, RedisLike } from "./types";
 
 export interface RedisCacheOptions {
-  /** Deployment namespace. Every key written to Redis is `${namespace}:c:${key}`. */
+  /** Deployment namespace. Every key written to Redis starts with `${namespace}:c:`. */
   namespace: string;
   guard: RedisGuard;
   /** Serves reads/writes while Redis is degraded. Defaults to a small private MemoryCache. */
   fallback?: Cache;
+  /** How long a group's version is trusted before re-reading it (other instances' bumps show up within this). */
+  versionTtlMs?: number;
+  /** Delay before a background retry of bumps that could not reach Redis. */
+  retryMs?: number;
+  now?: () => number;
 }
 
-const MAX_PENDING_INVALIDATIONS = 50;
-const SCAN_COUNT = 200;
-const SCAN_MAX_ROUNDS = 200;
-// A prefix sweep walks the keyspace, so it gets a longer budget than a point command.
-const SWEEP_TIMEOUT_MS = 3000;
-
-function escapeGlob(s: string): string {
-  return s.replace(/[\\*?[\]]/g, "\\$&");
+/** "products:slug:x" -> "products"; "payment-methods" -> "payment-methods". */
+function groupOf(keyOrPrefix: string): string {
+  const i = keyOrPrefix.indexOf(":");
+  return i === -1 ? keyOrPrefix : keyOrPrefix.slice(0, i);
 }
 
-type Pending = { kind: "key" | "prefix"; value: string };
+function restOf(key: string): string {
+  const i = key.indexOf(":");
+  return i === -1 ? "" : key.slice(i + 1);
+}
+
+interface Version {
+  value: string;
+  fetchedAt: number;
+}
 
 /**
- * Redis-backed cache that can never take the caller down. Any Redis failure (error, timeout, open breaker)
- * is absorbed: reads and writes are served by the in-memory fallback until Redis answers again.
+ * Redis-backed cache that can never take the caller down. Any Redis failure (error, timeout, open breaker) is
+ * absorbed: reads and writes are served by the in-memory fallback until Redis answers again.
  *
- * Invalidations that could not reach Redis are remembered and replayed before the next Redis read, so an
- * outage cannot resurrect stale entries that were deleted while it lasted.
+ * Invalidation is versioned instead of scanning: keys are `${ns}:c:<group>:v<ver>:<rest>` and the version lives
+ * in `${ns}:c:ver:<group>`. Invalidating a group is a single INCR; entries of older versions are never read again
+ * and simply expire by TTL. Each instance trusts a group's version for `versionTtlMs`, except that its own bumps
+ * apply immediately.
+ *
+ * Bumps that could not reach Redis are queued (a set of group names, so the queue is bounded) and retried in the
+ * background and before the next Redis read, so an outage cannot resurrect entries invalidated while it lasted.
  */
 export class RedisCache implements Cache {
-  private readonly ns: string;
+  private readonly base: string;
   private readonly guard: RedisGuard;
   private readonly fallback: Cache;
-  private pending: Pending[] = [];
-  private pendingOverflow = false;
+  private readonly versionTtlMs: number;
+  private readonly retryMs: number;
+  private readonly now: () => number;
+  private readonly versions = new Map<string, Version>();
+  private readonly knownGroups = new Set<string>();
+  private pending = new Set<string>();
   private replaying: Promise<void> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly client: RedisLike, options: RedisCacheOptions) {
-    this.ns = `${options.namespace}:c:`;
+    this.base = `${options.namespace}:c:`;
     this.guard = options.guard;
     this.fallback = options.fallback ?? new MemoryCache({ maxEntries: 500 });
+    this.versionTtlMs = options.versionTtlMs ?? 1000;
+    this.retryMs = options.retryMs ?? 5000;
+    this.now = options.now ?? Date.now;
   }
 
   get backend(): "memory" | "redis" {
@@ -49,8 +71,8 @@ export class RedisCache implements Cache {
 
   async get<T>(key: string): Promise<T | null> {
     try {
-      await this.replayPending();
-      const raw = await this.guard.run(() => this.client.get(this.ns + key));
+      const redisKey = await this.redisKey(key);
+      const raw = await this.guard.run(() => this.client.get(redisKey));
       if (raw === null) return null;
       try {
         return JSON.parse(raw) as T;
@@ -67,8 +89,8 @@ export class RedisCache implements Cache {
     const json = JSON.stringify(value);
     if (json === undefined) return;
     try {
-      await this.replayPending();
-      await this.guard.run(() => this.client.set(this.ns + key, json, "EX", Math.ceil(ttlSeconds)));
+      const redisKey = await this.redisKey(key);
+      await this.guard.run(() => this.client.set(redisKey, json, "EX", Math.ceil(ttlSeconds)));
     } catch {
       await this.fallback.set(key, value, ttlSeconds);
     }
@@ -76,75 +98,81 @@ export class RedisCache implements Cache {
 
   async del(key: string): Promise<void> {
     await this.fallback.del(key);
-    try {
-      await this.guard.run(() => this.client.del(this.ns + key));
-    } catch {
-      this.remember({ kind: "key", value: key });
-    }
+    await this.bump(groupOf(key)); // group granularity: exact deletes would need the (possibly stale) version
   }
 
   async delByPrefix(prefix: string): Promise<void> {
     await this.fallback.delByPrefix(prefix);
-    try {
-      const complete = await this.guard.run(() => this.scanDelete(prefix), SWEEP_TIMEOUT_MS);
-      if (!complete) this.remember({ kind: "prefix", value: prefix }); // cap hit on a huge keyspace: finish later
-    } catch {
-      this.remember({ kind: "prefix", value: prefix });
-    }
-  }
-
-  private remember(p: Pending): void {
-    if (this.pending.length >= MAX_PENDING_INVALIDATIONS) {
-      this.pendingOverflow = true;
-      this.pending = [];
+    if (prefix === "") {
+      await Promise.all([...this.knownGroups].map((g) => this.bump(g)));
       return;
     }
-    this.pending.push(p);
+    await this.bump(groupOf(prefix));
   }
 
+  private async redisKey(key: string): Promise<string> {
+    const group = groupOf(key);
+    this.knownGroups.add(group);
+    await this.replayPending(); // never read a group whose invalidation is still waiting to reach Redis
+    const version = await this.versionOf(group);
+    return `${this.base}${group}:v${version}:${restOf(key)}`;
+  }
+
+  private async versionOf(group: string): Promise<string> {
+    const cachedVersion = this.versions.get(group);
+    if (cachedVersion && this.now() - cachedVersion.fetchedAt < this.versionTtlMs) return cachedVersion.value;
+    const raw = await this.guard.run(() => this.client.get(`${this.base}ver:${group}`));
+    const value = raw ?? "0";
+    this.versions.set(group, { value, fetchedAt: this.now() });
+    return value;
+  }
+
+  /** One INCR. On failure the bump is queued; either way this never throws. */
+  private async bump(group: string): Promise<void> {
+    this.knownGroups.add(group);
+    try {
+      const next = await this.guard.run(() => this.client.incr(`${this.base}ver:${group}`));
+      this.versions.set(group, { value: String(next), fetchedAt: this.now() });
+    } catch {
+      this.versions.delete(group);
+      this.pending.add(group);
+      this.scheduleRetry();
+    }
+  }
+
+  private scheduleRetry(): void {
+    if (this.retryTimer || this.pending.size === 0) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.replayPending().catch(() => this.scheduleRetry());
+    }, this.retryMs);
+    this.retryTimer.unref?.();
+  }
+
+  /**
+   * Replays queued bumps. Concurrent callers share one in-flight attempt, the attempt is a single guarded
+   * round trip (bounded by the guard timeout), and a failure merges back into the queue instead of replacing it.
+   * Throws when Redis is still unreachable, which makes the caller use its fallback.
+   */
   private async replayPending(): Promise<void> {
-    if (this.replaying) return this.replaying; // concurrent callers wait for the same replay
-    if (this.pending.length === 0 && !this.pendingOverflow) return;
-    const todo = this.pending;
-    const overflow = this.pendingOverflow;
-    this.pending = [];
-    this.pendingOverflow = false;
+    if (this.replaying) return this.replaying;
+    if (this.pending.size === 0) return;
+    const todo = [...this.pending];
+    this.pending = new Set();
     this.replaying = (async () => {
       try {
-        const incomplete: Pending[] = [];
-        await this.guard.run(async () => {
-          if (overflow) {
-            if (!(await this.scanDelete(""))) incomplete.push({ kind: "prefix", value: "" }); // whole namespace, never FLUSH
-            return;
-          }
-          for (const p of todo) {
-            if (p.kind === "key") await this.client.del(this.ns + p.value);
-            else if (!(await this.scanDelete(p.value))) incomplete.push(p);
-          }
-        }, SWEEP_TIMEOUT_MS);
-        this.pending = incomplete.concat(this.pending);
+        const results = await this.guard.run(() =>
+          Promise.all(todo.map((g) => this.client.incr(`${this.base}ver:${g}`))),
+        );
+        todo.forEach((g, i) => this.versions.set(g, { value: String(results[i]), fetchedAt: this.now() }));
       } catch (err) {
-        // keep what failed AND anything remembered while the replay was running
-        this.pending = todo.concat(this.pending);
-        this.pendingOverflow = this.pendingOverflow || overflow;
+        for (const g of todo) this.pending.add(g); // merge: keeps anything queued while we were running
+        this.scheduleRetry();
         throw err;
       } finally {
         this.replaying = null;
       }
     })();
     return this.replaying;
-  }
-
-  /** Returns false when the round cap was hit before the sweep finished. */
-  private async scanDelete(prefix: string): Promise<boolean> {
-    const pattern = `${escapeGlob(this.ns + prefix)}*`;
-    let cursor = "0";
-    for (let round = 0; round < SCAN_MAX_ROUNDS; round++) {
-      const [next, keys] = await this.client.scan(cursor, "MATCH", pattern, "COUNT", SCAN_COUNT);
-      if (keys.length > 0) await this.client.del(...keys);
-      cursor = next;
-      if (cursor === "0") return true;
-    }
-    return false;
   }
 }

@@ -24,6 +24,7 @@ export interface RedisGuardOptions {
 export class RedisGuard {
   private openUntil = 0;
   private degraded = false;
+  private probing = false;
   private readonly timeoutMs: number;
   private readonly cooldownMs: number;
   private readonly now: () => number;
@@ -48,6 +49,13 @@ export class RedisGuard {
 
   async run<T>(op: () => Promise<T>, timeoutMs: number = this.timeoutMs): Promise<T> {
     if (this.isOpen) throw new RedisUnavailableError("redis circuit open");
+    // Half-open: the cooldown elapsed but Redis has not proven healthy yet. Exactly one caller probes; everyone
+    // else keeps using their fallback, so a recovering/slow Redis is not hit by a thundering herd of timeouts.
+    const probe = this.degraded;
+    if (probe) {
+      if (this.probing) throw new RedisUnavailableError("redis probe in flight");
+      this.probing = true;
+    }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const timeout = new Promise<never>((_, reject) => {
@@ -62,6 +70,7 @@ export class RedisGuard {
       throw err instanceof RedisUnavailableError ? err : new RedisUnavailableError((err as Error)?.message ?? "redis error");
     } finally {
       if (timer) clearTimeout(timer);
+      if (probe) this.probing = false;
     }
   }
 

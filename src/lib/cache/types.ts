@@ -8,7 +8,11 @@ export interface Cache {
   get<T>(key: string): Promise<T | null>;
   set(key: string, value: unknown, ttlSeconds: number): Promise<void>;
   del(key: string): Promise<void>;
-  /** Removes every entry whose key starts with `prefix`. Only touches this deployment's namespace. */
+  /**
+   * Invalidates every entry of the group the prefix belongs to (the part before the first ':', e.g. "products:"
+   * covers "products:list" and "products:slug:x"). Over-invalidating inside a group is intended.
+   * An empty prefix invalidates every group this process knows about.
+   */
   delByPrefix(prefix: string): Promise<void>;
 }
 
@@ -18,7 +22,7 @@ export interface RedisLike {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, mode: "EX", seconds: number): Promise<unknown>;
   del(...keys: string[]): Promise<number>;
-  scan(cursor: string, match: "MATCH", pattern: string, count: "COUNT", n: number): Promise<[string, string[]]>;
+  incr(key: string): Promise<number>;
   eval(script: string, numKeys: number, ...args: (string | number)[]): Promise<unknown>;
 }
 

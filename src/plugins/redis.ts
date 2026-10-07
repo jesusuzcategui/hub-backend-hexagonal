@@ -29,6 +29,11 @@ declare module "fastify" {
 export interface RedisPluginOptions {
   /** Test seam: use this client instead of connecting to env.cache.url. */
   client?: RedisLike | null;
+  /**
+   * Explicit connection URL. Under NODE_ENV=test the URL from the environment is IGNORED (a developer .env with
+   * REDIS_URL must never make the test suite talk to a real Redis); only an explicit `url` or `client` is honored.
+   */
+  url?: string;
   /** Test seam: bypass the NODE_ENV/CACHE_ENABLED flag. */
   cacheEnabled?: boolean;
   /** Test seam: milliseconds to wait for the first connection at boot. */
@@ -75,7 +80,7 @@ function waitForReady(client: Redis, ms: number): Promise<boolean> {
 }
 
 async function redisPlugin(fastify: FastifyInstance, opts: RedisPluginOptions = {}): Promise<void> {
-  const url = env.cache.url;
+  const url = opts.url ?? (process.env.NODE_ENV === "test" ? undefined : env.cache.url);
   const injected = opts.client !== undefined;
 
   const guard = new RedisGuard({ log: fastify.log });
@@ -97,14 +102,16 @@ async function redisPlugin(fastify: FastifyInstance, opts: RedisPluginOptions = 
     cache = client ? new RedisCache(client, { namespace, guard }) : new MemoryCache({ maxEntries: 1000 });
   }
 
-  const info = (): CacheInfo => ({
-    redis: client === null ? "disabled" : guard.isDegraded || (ioredis !== null && ioredis.status !== "ready") ? "degraded" : "connected",
-    cache: !cacheOn ? "off" : client === null ? "memory" : guard.isDegraded ? "memory" : "redis",
-  });
+  const info = (): CacheInfo => {
+    if (client === null) return { redis: "disabled", cache: cacheOn ? "memory" : "off" };
+    // Degraded = the breaker saw a failure OR the socket is not ready (e.g. never connected since boot).
+    const degraded = guard.isDegraded || (ioredis !== null && ioredis.status !== "ready");
+    return { redis: degraded ? "degraded" : "connected", cache: !cacheOn ? "off" : degraded ? "memory" : "redis" };
+  };
 
   fastify.decorate("redis", ioredis);
   fastify.decorate("cache", cache);
-  fastify.decorate("rateLimitStore", client ? (scope: string) => createRateLimitStore({ client, guard, namespace, scope }) : undefined);
+  fastify.decorate("rateLimitStore", client ? (scope: string) => createRateLimitStore({ client, guard, namespace, scope, log: fastify.log }) : undefined);
   fastify.decorate("cacheInfo", info);
 
   if (ioredis) {

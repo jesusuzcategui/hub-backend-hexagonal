@@ -55,7 +55,7 @@ describe("redis plugin with an injected client", () => {
     expect(app.rateLimitStore).toBeDefined();
     expect(rateLimitStoreOptions(app, "x").store).toBeDefined();
     await app.cache.set("products:list", [1], 60);
-    expect([...redis.store.keys()]).toEqual(["hub-test:c:products:list"]);
+    expect([...redis.store.keys()]).toEqual(["hub-test:c:products:v0:list"]);
     await app.close();
   });
 
