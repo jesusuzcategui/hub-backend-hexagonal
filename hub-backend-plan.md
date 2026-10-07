@@ -1,7 +1,7 @@
 # Hub Backend — Plan de Implementación
 
 Backend personal para e-commerce de clases de tutoría.
-Stack: Fastify 5 + TypeScript + PostgreSQL + Redis + MercadoPago + Google Calendar.
+Stack: Fastify 5 + TypeScript + PostgreSQL + Redis (opcional) + MercadoPago + Google Calendar.
 
 ---
 
@@ -432,15 +432,40 @@ CREATE INDEX idx_audit_logs_created_at ON app.audit_logs(created_at);
 
 ---
 
-## Carrito: Redis (no DB)
+## Carrito: Postgres (`ecommerce.carts`)
 
-```
-cart:{userId}          HASH  — usuario autenticado, TTL 7 días
-cart:guest:{sessionId} HASH  — invitado, TTL 7 días
-```
+El carrito vive en PostgreSQL, en `ecommerce.carts`, y no en Redis: es transaccional con el checkout y las órdenes
+lo referencian por FK. (Una versión anterior de este plan decía "Carrito: Redis"; nunca se implementó así.)
 
-- Merge en login: `RENAME cart:guest:{sid} cart:{userId}`
 - Checkout: precios re-validados contra `ecommerce.products` antes de crear la orden
+
+---
+
+## Redis: opcional (decisión 13)
+
+`REDIS_URL` es **opcional**. Sin ella (vacía o sin definir) el hub arranca y se comporta igual, con adaptadores en
+memoria; con ella, Redis se usa para dos cosas y nada más:
+
+| Uso | Con Redis | Sin Redis |
+|-----|-----------|-----------|
+| Rate limiting (`@fastify/rate-limit`: contacto, portfolio, auth, cart) | Contadores compartidos entre instancias | Contadores por proceso (como antes) |
+| Cache de lecturas públicas calientes | `GET /products`, `GET /products/:slug`, `GET /payment-methods` | Apagado (pasa directo a la DB) |
+
+- **Resiliencia:** una caída o lentitud de Redis nunca tumba la API ni bloquea requests. Cada comando tiene timeout
+  corto (300 ms) y un circuit breaker de 5 s; mientras Redis falla, el rate limit cuenta en memoria y el cache usa un
+  fallback en memoria, con una línea de log al degradar y otra al recuperar. ioredis reconecta en segundo plano.
+- **Invalidación:** el cache se invalida explícitamente donde se escribe (sync de productos desde WordPress, ya sea
+  por webhook `/webhooks/wp` o `POST /admin/products/sync`; toggle de `PATCH /admin/payment-methods/:method`).
+  Los TTL (120 s productos, 60 s payment-methods) son la red de seguridad si se escapa una invalidación.
+  `/schedule/slots` **no** se cachea (depende de reservas, bloqueos y sync de CalDAV).
+- **Claves por deployment:** todo lo que se escribe en Redis lleva el prefijo `CACHE_PREFIX` (por defecto
+  `hub-<hash8 de WP_URL>`), así dos instancias o compradores que compartan un Redis no se pisan. Nunca se hace FLUSH.
+- **Estado visible:** el log de arranque indica `redis: active | disabled | configured but not reachable`, y
+  `GET /health` devuelve `{ status: "ok", redis: "disabled" | "connected" | "degraded", cache: "off" | "memory" | "redis" }`.
+  El `status` sigue siendo `ok` aunque Redis esté degradado: no es una dependencia dura.
+
+Variables (nombres; ver `.env.example`): `REDIS_URL`, `CACHE_PREFIX`, `CACHE_ENABLED`.
+El cache está apagado siempre bajo `NODE_ENV=test`.
 
 ---
 
@@ -488,7 +513,7 @@ Al crear una reserva:
 | 6 | `src/modules/auth/` | Register, login, logout, OAuth Google/GitHub, token rotation |
 | 7 | `src/modules/users/` | Perfil, admin, gestión de roles |
 | 8 | `src/modules/products/` | Catálogo + endpoint sync de Strapi webhook |
-| 9 | `src/modules/cart/` | Carrito Redis |
+| 9 | `src/modules/cart/` | Carrito (Postgres, `ecommerce.carts`) |
 | 10 | `src/modules/checkout/` | Orden + MercadoPago preference |
 | 11 | `src/modules/webhooks/` | MP IPN idempotente → confirmar pago → crear créditos |
 | 12 | `src/modules/payments/` | Historial de pagos (lectura) |
