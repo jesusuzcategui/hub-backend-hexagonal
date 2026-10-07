@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
+import { rateLimitedError } from "../../lib/errors";
 import { rateLimitStoreOptions } from "../../lib/cache";
 import { bookSlotSchema, submitReviewSchema } from "./portfolio.schemas.js";
 import { createMentoringRequest, getPublicSlots, submitReview } from "./portfolio.service.js";
@@ -12,9 +13,7 @@ export async function portfolioRoutes(fastify: FastifyInstance): Promise<void> {
     max: 20,
     timeWindow: "5 minutes",
     keyGenerator: (req) => req.ip,
-    errorResponseBuilder: () => ({
-      error: { code: "RATE_LIMITED", message: "Too many requests. Try again later." },
-    }),
+    errorResponseBuilder: rateLimitedError,
   });
 
   fastify.get("/public/slots", async (_req, reply) => {

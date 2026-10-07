@@ -61,13 +61,13 @@ describe("app with Redis enabled (fake ioredis)", () => {
     expect(res.json()).toEqual({ status: "ok", redis: "connected", cache: "redis" });
   });
 
-  it("real routes use the shared store: same limit and same rate-limited status as without Redis", async () => {
+  it("real routes use the shared store: same limit and same 429 as without Redis", async () => {
     const codes: number[] = [];
     for (let i = 0; i < 4; i++) {
       const res = await app.inject({ method: "POST", url: "/contact", remoteAddress: "10.8.8.8", payload: {} });
       codes.push(res.statusCode);
     }
-    expect(codes).toEqual([400, 400, 400, 500]); // identical to the in-memory path (see redis.boot.test.ts)
+    expect(codes).toEqual([400, 400, 400, 429]); // identical to the in-memory path (see redis.boot.test.ts)
     const keys = [...fakeState.instances[0].store.keys()] as string[];
     expect(keys.some((k) => k.includes(":rl:contact:") && k.endsWith("10.8.8.8"))).toBe(true);
   });

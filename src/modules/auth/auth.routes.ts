@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
+import { rateLimitedError } from "../../lib/errors";
 import { rateLimitStoreOptions } from "../../lib/cache";
 import {
   registerController,
@@ -28,9 +29,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       max: 5,
       timeWindow: "15 minutes",
       keyGenerator: (req) => req.ip,
-      errorResponseBuilder: () => ({
-        error: { code: "RATE_LIMITED", message: "Too many requests. Try again later." },
-      }),
+      errorResponseBuilder: rateLimitedError,
     });
     scoped.post("/auth/forgot-password", forgotPasswordController);
   });

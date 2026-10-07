@@ -44,16 +44,14 @@ describe("full app boot with no REDIS_URL", () => {
     expect(ioredisCtor).not.toHaveBeenCalled();
   });
 
-  it("rate limiting works on the in-memory store: 3 requests pass, the 4th is limited (currently surfaces as 500)", async () => {
+  it("rate limiting works on the in-memory store: 3 requests pass, the 4th is limited (the limited call is 429)", async () => {
     const codes: number[] = [];
     for (let i = 0; i < 4; i++) {
       const res = await app.inject({ method: "POST", url: "/contact", remoteAddress: "10.9.9.9", payload: {} });
       codes.push(res.statusCode);
     }
-    // The first three reach validation (400 for the empty body). The route's errorResponseBuilder carries no
-    // statusCode, so the app's error handler turns the limit error into 500 INTERNAL_ERROR instead of 429.
-    // That is pre-existing behavior (verified identical on staging); pinned exactly here so a fix is deliberate.
-    expect(codes).toEqual([400, 400, 400, 500]);
+    // The first three reach validation (400 for the empty body); the 4th is rejected by the rate limiter.
+    expect(codes).toEqual([400, 400, 400, 429]);
   });
 });
 
