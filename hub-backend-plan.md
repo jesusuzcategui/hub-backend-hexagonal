@@ -452,8 +452,14 @@ memoria; con ella, Redis se usa para dos cosas y nada más:
 | Cache de lecturas públicas calientes | `GET /products`, `GET /products/:slug`, `GET /payment-methods` | Apagado (pasa directo a la DB) |
 
 - **Resiliencia:** una caída o lentitud de Redis nunca tumba la API ni bloquea requests. Cada comando tiene timeout
-  corto (300 ms) y un circuit breaker de 5 s; mientras Redis falla, el rate limit cuenta en memoria y el cache usa un
+  corto (300 ms) y un circuit breaker de 5 s con half-open (tras el cooldown un único request sondea; el resto sigue
+  en memoria); mientras Redis falla, el rate limit cuenta en memoria y el cache usa un
   fallback en memoria, con una línea de log al degradar y otra al recuperar. ioredis reconecta en segundo plano.
+- **Invalidación por versión (sin SCAN):** las claves son `<prefijo>:c:<grupo>:v<versión>:<resto>` y la versión vive en
+  `<prefijo>:c:ver:<grupo>`; invalidar un grupo es un único `INCR`. Las entradas de versiones viejas dejan de leerse y
+  expiran por TTL. Cada instancia confía en la versión ~1 s (su propio `INCR` aplica al instante; las otras instancias
+  lo ven en ~1 s). Si Redis está caído, los `INCR` pendientes se encolan y se reintentan en segundo plano y antes de
+  la próxima lectura.
 - **Invalidación:** el cache se invalida explícitamente donde se escribe (sync de productos desde WordPress, ya sea
   por webhook `/webhooks/wp` o `POST /admin/products/sync`; toggle de `PATCH /admin/payment-methods/:method`).
   Los TTL (120 s productos, 60 s payment-methods) son la red de seguridad si se escapa una invalidación.
@@ -464,8 +470,28 @@ memoria; con ella, Redis se usa para dos cosas y nada más:
   `GET /health` devuelve `{ status: "ok", redis: "disabled" | "connected" | "degraded", cache: "off" | "memory" | "redis" }`.
   El `status` sigue siendo `ok` aunque Redis esté degradado: no es una dependencia dura.
 
-Variables (nombres; ver `.env.example`): `REDIS_URL`, `CACHE_PREFIX`, `CACHE_ENABLED`.
-El cache está apagado siempre bajo `NODE_ENV=test`.
+Variables (nombres; ver `.env.example`): `REDIS_URL`, `CACHE_PREFIX`, `CACHE_ENABLED`, `TRUST_PROXY`.
+El cache está apagado siempre bajo `NODE_ENV=test`, y bajo test **nunca** se abre una conexión Redis real aunque `REDIS_URL`
+esté en el entorno (solo se usa un cliente inyectado o una URL explícita).
+
+**Rate limit y `TRUST_PROXY` (importante en producción):** detrás de Coolify/Traefik, sin `TRUST_PROXY` Fastify ve la IP
+del proxy en `req.ip` y **todos los clientes comparten un único contador** (con o sin Redis). Recomendamos fijar
+`TRUST_PROXY` en producción (`true` si el hub solo es alcanzable por el proxy, o la lista de CIDRs del proxy, que es lo más
+seguro). Los conteos de saltos (`1`, `2`) se rechazan: esta versión de Fastify los trata como "no confiar en nadie".
+Por defecto está apagado, así que nada cambia en local.
+
+**Durante una caída de Redis** los límites pasan a contarse por proceso: con K instancias el máximo efectivo es hasta
+K x `max` por ventana. Se emite un warn (máx. uno cada 30 s) por cada scope (`auth`, `cart`, `contact`, `portfolio`)
+que cae a conteo local.
+
+**Limitaciones conocidas y aceptadas:**
+- Ventana de lectura obsoleta de hasta un TTL tras una invalidación (una lectura iniciada antes del commit puede
+  re-cachear el dato viejo); por eso los TTL son cortos (120 s / 60 s).
+- `CACHE_ENABLED=true` sin Redis es solo para una instancia (cada proceso tiene su cache).
+- `GET /health` expone el estado grueso de Redis/cache (`redis`, `cache`), no datos sensibles.
+- El hub todavía no tiene handler de SIGTERM (preexistente; seguimiento aparte).
+- El arranque espera hasta 2 s a que Redis conecte (solo para loguear un estado exacto; nunca bloquea ni falla).
+- Con las claves versionadas, invalidar `products:` descarta todo el grupo (listado y detalles), no una sola clave.
 
 ---
 

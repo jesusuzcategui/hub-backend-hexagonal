@@ -16,9 +16,12 @@ services:
       STATE_SECRET: "${STATE_SECRET:?STATE_SECRET is required}"
       ALLOWED_REDIRECT_HOSTS: "${ALLOWED_REDIRECT_HOSTS:-}"
       DATABASE_URL: "${DATABASE_URL:?DATABASE_URL is required}"
-      REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+      # Empty/unset = no Redis (the hub runs fine without it). To use the bundled Redis, set
+      # REDIS_URL=redis://redis:6379 and start with `--profile redis`.
+      REDIS_URL: "${REDIS_URL-}"
       CACHE_PREFIX: "${CACHE_PREFIX:-}"
       CACHE_ENABLED: "${CACHE_ENABLED:-}"
+      TRUST_PROXY: "${TRUST_PROXY:-}"
       JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}"
       JWT_ACCESS_EXPIRY_SECONDS: "${JWT_ACCESS_EXPIRY_SECONDS:-900}"
       JWT_REFRESH_EXPIRY_SECONDS: "${JWT_REFRESH_EXPIRY_SECONDS:-2592000}"
@@ -92,6 +95,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+        required: false # only present with `--profile redis`
     restart: unless-stopped
 
   postgres:
@@ -112,6 +116,7 @@ services:
     restart: unless-stopped
 
   redis:
+    profiles: ["redis"]
     image: redis:7-alpine
     ports:
       - "${REDIS_PORT:-6379}:6379"
