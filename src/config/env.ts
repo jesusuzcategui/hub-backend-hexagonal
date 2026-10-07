@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 const envSchema = z.object({
@@ -7,7 +8,18 @@ const envSchema = z.object({
   ALLOWED_REDIRECT_HOSTS: z.string().default(""),
 
   DATABASE_URL: z.string().url(),
-  REDIS_URL: z.string().url(),
+  // Optional: empty/unset = no Redis (in-memory rate limits, no shared cache). See docs on decision 13.
+  REDIS_URL: z.string().url().optional().or(z.literal("")).transform((v) => v || undefined),
+  // Namespace for every key this deployment writes to a shared Redis. Defaults to a hash of WP_URL + DATABASE_URL so two
+  // deployments pointing at different WordPress sites cannot collide even if nobody sets it.
+  CACHE_PREFIX: z
+    .string()
+    .regex(/^[A-Za-z0-9:_-]{1,64}$/, "CACHE_PREFIX may only contain letters, digits, ':', '_' and '-'")
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => v || undefined),
+  // "false" disables caching even with Redis; "true" enables the in-memory cache without Redis; unset = on iff Redis.
+  CACHE_ENABLED: z.string().optional(),
 
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_ACCESS_EXPIRY_SECONDS: z.coerce.number().int().positive().default(900),
@@ -117,6 +129,7 @@ export const env = {
   },
   cache: {
     url: _env.REDIS_URL,
+    prefix: _env.CACHE_PREFIX ?? `hub-${createHash("sha1").update(`${_env.WP_URL}|${_env.DATABASE_URL}`).digest("hex").slice(0, 8)}`,
   },
   jwt: {
     accessSecret: _env.JWT_ACCESS_SECRET,

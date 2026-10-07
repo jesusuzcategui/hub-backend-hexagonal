@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
+import { rateLimitStoreOptions } from "../../lib/cache";
 import { bookSlotSchema, submitReviewSchema } from "./portfolio.schemas.js";
 import { createMentoringRequest, getPublicSlots, submitReview } from "./portfolio.service.js";
 import { AppError } from "../../lib/errors.js";
@@ -7,6 +8,7 @@ import { verifyCaptchaToken } from "./portfolio.captcha.js";
 
 export async function portfolioRoutes(fastify: FastifyInstance): Promise<void> {
   await fastify.register(rateLimit, {
+    ...rateLimitStoreOptions(fastify, "portfolio"),
     max: 20,
     timeWindow: "5 minutes",
     keyGenerator: (req) => req.ip,

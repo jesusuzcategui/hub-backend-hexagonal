@@ -16,6 +16,7 @@ import {
 } from "hexagonal-payments-core";
 import { accounts, carts, coupons, orderReviewEvents, products, passwordResetTokens, paymentMethodSettings } from "../../db/schema";
 import { AppError } from "../../lib/errors";
+import { CacheKeys, CacheTtl, cached, getCache } from "../../lib/cache";
 import { env } from "../../config/env";
 import { grantCreditsToStudent } from "../admin/admin.service";
 import { grantContentAccess } from "../content-access/content-access.service";
@@ -844,6 +845,20 @@ const ALL_PAYMENT_METHODS: PaymentMethod[] = ["epayco", "paypal", "manual_transf
 // Missing rows (shouldn't happen post-migration, but just in case) default
 // to enabled, same as the checkout() guard's fail-open-if-unknown stance.
 export async function listPaymentMethods(fastify: FastifyInstance): Promise<Record<PaymentMethod, boolean>> {
+  return cached(getCache(fastify), CacheKeys.paymentMethods, CacheTtl.paymentMethods, () => listPaymentMethodsFromDb(fastify));
+}
+
+// setPaymentMethodEnabled (admin.service.ts) is the only writer and calls this.
+export async function invalidatePaymentMethodsCache(fastify: FastifyInstance): Promise<void> {
+  const cache = getCache(fastify);
+  try {
+    await cache.del(CacheKeys.paymentMethods);
+  } catch {
+    // TTL is the backstop
+  }
+}
+
+async function listPaymentMethodsFromDb(fastify: FastifyInstance): Promise<Record<PaymentMethod, boolean>> {
   const rows = await fastify.drizzle.query.paymentMethodSettings.findMany();
   const byMethod = new Map(rows.map((r) => [r.method, r.enabled]));
   return Object.fromEntries(

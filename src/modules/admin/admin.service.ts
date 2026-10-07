@@ -20,7 +20,7 @@ import { adminRescheduleBooking, createStudentBooking, getAvailableSlots, getStu
 import { buildBookingCancelledEmail, buildWeeklySlotChangeEmail } from "../schedule/student-emails.js";
 import { resolveGrantExpiry } from "../schedule/credit-balance.js";
 import { reverifyOrder } from "../payments/review-verification.service.js";
-import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer, resolveOrderReview, listPaymentMethods, type PaymentMethod } from "../payments/payments.service.js";
+import { escapeHtml, getManualTransferProof, getOrderDetailForAdmin, listOrdersForAdmin, validateManualTransfer, resolveOrderReview, listPaymentMethods, invalidatePaymentMethodsCache, type PaymentMethod } from "../payments/payments.service.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import { createCart } from "../cart/cart.service.js";
 import { toDecimalMajor } from "../../adapters/payments/money.js";
@@ -170,6 +170,8 @@ export async function setPaymentMethodEnabled(
     .insert(paymentMethodSettings)
     .values({ method, enabled })
     .onConflictDoUpdate({ target: paymentMethodSettings.method, set: { enabled, updatedAt: new Date() } });
+
+  await invalidatePaymentMethodsCache(fastify);
 }
 
 export async function listBookings(fastify: FastifyInstance, status?: string) {

@@ -122,7 +122,9 @@ export const buildApp = (): FastifyInstance => {
   app.register(paymentsRoutes);
   app.register(classNotesRoutes);
 
-  app.get("/health", async () => ({ status: "ok" }));
+  // `redis` reports whether the shared Redis is active ("connected"), unavailable and degraded to in-memory
+  // ("degraded"), or not configured ("disabled"). The status itself stays "ok": Redis is never required.
+  app.get("/health", async () => ({ status: "ok", ...app.cacheInfo() }));
 
   app.setErrorHandler((error: FastifyError | AppError, _request, reply) => {
     if (error instanceof AppError) {

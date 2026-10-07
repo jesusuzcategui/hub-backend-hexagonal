@@ -2,6 +2,7 @@ import { eq, notInArray } from "drizzle-orm";
 import { FastifyInstance } from "fastify";
 import { products } from "../../db/schema";
 import { AppError } from "../../lib/errors";
+import { CacheKeys, CacheTtl, cached, getCache, invalidatePrefix } from "../../lib/cache";
 import { fetchWpProducts, WP_PRODUCT_CONTENT_TYPE, type WpProduct } from "../../lib/wp";
 
 function mapWpToDb(p: WpProduct) {
@@ -28,6 +29,14 @@ export async function syncProductFromWp(fastify: FastifyInstance, wpProduct: WpP
     .insert(products)
     .values(values)
     .onConflictDoUpdate({ target: products.externalId, set: values });
+
+  await invalidateProductCache(fastify);
+}
+
+// Every writer of the products table must call this (today: syncProductFromWp and syncAllProducts, which is
+// what both the WordPress webhook and POST /admin/products/sync run). TTLs are the backstop for a missed call.
+export async function invalidateProductCache(fastify: FastifyInstance): Promise<void> {
+  await invalidatePrefix(getCache(fastify), CacheKeys.productsPrefix);
 }
 
 /**
@@ -42,22 +51,32 @@ export async function syncAllProducts(
   const wpProducts = await fetchProducts();
   if (wpProducts.length === 0) return 0;
 
-  await Promise.all(wpProducts.map((p) => syncProductFromWp(fastify, p)));
+  try {
+    await Promise.all(wpProducts.map((p) => syncProductFromWp(fastify, p)));
 
-  await fastify.drizzle
-    .update(products)
-    .set({ isActive: false, updatedAt: new Date() })
-    .where(
-      notInArray(
-        products.externalId,
-        wpProducts.map((p) => p.externalId),
-      ),
-    );
+    await fastify.drizzle
+      .update(products)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(
+        notInArray(
+          products.externalId,
+          wpProducts.map((p) => p.externalId),
+        ),
+      );
+  } finally {
+    // Also on a partial failure: some rows may already have changed. Runs after the last write. A read that began before
+    // the commit can still re-cache old data; the TTL bounds that.
+    await invalidateProductCache(fastify);
+  }
 
   return wpProducts.length;
 }
 
 export async function listProducts(fastify: FastifyInstance) {
+  return cached(getCache(fastify), CacheKeys.productsList, CacheTtl.products, () => listProductsFromDb(fastify));
+}
+
+async function listProductsFromDb(fastify: FastifyInstance) {
   return fastify.drizzle.query.products.findMany({
     where: eq(products.isActive, true),
     columns: {
@@ -94,6 +113,20 @@ export async function listProductsForAdmin(fastify: FastifyInstance) {
 }
 
 export async function getProductBySlug(fastify: FastifyInstance, slug: string) {
+  // Only a found, active product is cached (the loader returns null for 404s), so unknown slugs from the
+  // public URL cannot grow the cache.
+  const product = await cached(getCache(fastify), CacheKeys.productBySlug(slug), CacheTtl.products, () =>
+    findActiveProductBySlug(fastify, slug),
+  );
+
+  if (!product) {
+    throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found");
+  }
+
+  return product;
+}
+
+async function findActiveProductBySlug(fastify: FastifyInstance, slug: string) {
   const product = await fastify.drizzle.query.products.findFirst({
     where: eq(products.slug, slug),
     columns: {
@@ -108,9 +141,5 @@ export async function getProductBySlug(fastify: FastifyInstance, slug: string) {
     },
   });
 
-  if (!product || !product.isActive) {
-    throw new AppError(404, "PRODUCT_NOT_FOUND", "Product not found");
-  }
-
-  return product;
+  return product && product.isActive ? product : null;
 }

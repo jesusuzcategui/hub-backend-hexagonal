@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
+import { rateLimitStoreOptions } from "../../lib/cache";
 import {
   registerController,
   loginController,
@@ -23,6 +24,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
   // this off the rest of /auth/*.
   await fastify.register(async (scoped) => {
     await scoped.register(rateLimit, {
+      ...rateLimitStoreOptions(scoped, "auth"),
       max: 5,
       timeWindow: "15 minutes",
       keyGenerator: (req) => req.ip,

@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import rateLimit from "@fastify/rate-limit";
+import { rateLimitStoreOptions } from "../../lib/cache";
 import { createCartController, getCartController, updateCartController, sendCartLinkController } from "./cart.controller";
 
 // Public, no-auth: buyers have no account yet at cart stage. The cart's `id`
@@ -13,6 +14,7 @@ export async function cartRoutes(fastify: FastifyInstance): Promise<void> {
   // /auth/forgot-password (see auth.routes.ts).
   await fastify.register(async (scoped) => {
     await scoped.register(rateLimit, {
+      ...rateLimitStoreOptions(scoped, "cart"),
       max: 5,
       timeWindow: "15 minutes",
       keyGenerator: (req) => req.ip,
