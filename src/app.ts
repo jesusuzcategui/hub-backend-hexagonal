@@ -53,7 +53,10 @@ const ALLOWED_ORIGINS = [
 ];
 
 export const buildApp = (): FastifyInstance => {
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: true,
+    trustProxy: env.server.trustProxy,
+  });
 
   app.register(fastifyCors, {
     origin: (origin, cb) => {

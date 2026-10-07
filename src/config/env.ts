@@ -1,11 +1,24 @@
 import "dotenv/config";
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { parseTrustProxy } from "../lib/trust-proxy";
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive(),
   STATE_SECRET: z.string().min(32),
   ALLOWED_REDIRECT_HOSTS: z.string().default(""),
+  // true | comma-separated proxy addresses/CIDRs. Default false. Set it behind a reverse proxy (see .env.example).
+  TRUST_PROXY: z
+    .string()
+    .default("")
+    .transform((v, ctx) => {
+      try {
+        return parseTrustProxy(v);
+      } catch (e) {
+        ctx.addIssue({ code: "custom", message: (e as Error).message });
+        return z.NEVER;
+      }
+    }),
 
   DATABASE_URL: z.string().url(),
   // Optional: empty/unset = no Redis (in-memory rate limits, no shared cache). See docs on decision 13.
@@ -123,6 +136,7 @@ export const env = {
     port: _env.PORT,
     stateSecret: _env.STATE_SECRET,
     allowedRedirectHosts: new Set(allowedHosts),
+    trustProxy: _env.TRUST_PROXY,
   },
   database: {
     url: _env.DATABASE_URL,
