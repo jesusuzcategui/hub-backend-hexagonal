@@ -4,6 +4,7 @@
 //
 // Timezone: America/Bogota is fixed UTC-5 (no DST), like the rest of the hub, so a local
 // "YYYY-MM-DD HH:MM" maps to a UTC instant with a constant offset.
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { AppError } from "../../lib/errors.js";
 import { pickCreditBlock, type CreditBlockLike } from "./credit-balance.js";
@@ -249,4 +250,36 @@ export function splitSeriesRequest(body: unknown): { rule: SeriesRule; skipConfl
     throw new AppError(400, "VALIDATION_ERROR", "skipConflicts must be a boolean");
   }
   return { rule: validateSeriesRule(rest), skipConflicts: skipConflicts === true };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Idempotency
+// ---------------------------------------------------------------------------------------------
+
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9_-]{8,128}$/;
+
+/** Validates the optional `Idempotency-Key` header value. Absent -> undefined; invalid -> 400. */
+export function parseIdempotencyKey(header: unknown): string | undefined {
+  if (header === undefined) return undefined;
+  if (typeof header !== "string" || !IDEMPOTENCY_KEY_RE.test(header)) {
+    throw new AppError(400, "VALIDATION_ERROR", "Idempotency-Key must be 8-128 characters of A-Z, a-z, 0-9, _ or -");
+  }
+  return header;
+}
+
+/**
+ * Stable hash of what a request asks for: the validated rule (pattern order is irrelevant) plus
+ * skipConflicts. Two bodies that create the same series have the same fingerprint, whatever their
+ * JSON key order or an explicit `skipConflicts: false`.
+ */
+export function seriesFingerprint(rule: SeriesRule, skipConflicts: boolean): string {
+  const pattern = [...rule.pattern].sort((a, b) => a.weekday - b.weekday || a.time.localeCompare(b.time));
+  const canonical = JSON.stringify({
+    pattern: pattern.map((p) => [p.weekday, p.time]),
+    intervalWeeks: rule.intervalWeeks,
+    startDate: rule.startDate,
+    occurrences: rule.occurrences,
+    skipConflicts,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
 }

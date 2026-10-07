@@ -19,6 +19,7 @@ import {
   allocateCredits,
   classifyOccurrences,
   generateOccurrences,
+  seriesFingerprint,
   validateSeriesRule,
   type ClassifiedOccurrence,
   type OccurrenceStatus,
@@ -136,15 +137,59 @@ export async function previewSeries(fastify: FastifyInstance, params: { studentI
  */
 export async function createSeries(
   fastify: FastifyInstance,
-  params: { studentId: string; createdBy: string; rule: unknown; skipConflicts?: boolean },
-) {
-  const { studentId, createdBy, skipConflicts = false } = params;
+  params: { studentId: string; createdBy: string; rule: unknown; skipConflicts?: boolean; idempotencyKey?: string },
+): Promise<CreateSeriesResult> {
+  return (await createSeriesIdempotent(fastify, params)).result;
+}
+
+export interface CreateSeriesResult {
+  seriesId: string;
+  requested: number;
+  created: number;
+  skipped: OccurrenceReport[];
+  creditsUsed: number;
+  balanceAfter: number;
+  bookings: Array<{ bookingId: string; startsAt: string; meetLink: string }>;
+}
+
+/**
+ * Idempotent creation. With `idempotencyKey`:
+ *  - the transaction first takes an advisory lock on hash(student, key), so a concurrent duplicate
+ *    waits for the first one to commit (or roll back) and then replays it;
+ *  - same (student, key) already stored + same fingerprint -> `replayed: true` with the ORIGINAL
+ *    response (stored on the series row in the same transaction that created it); no credits,
+ *    emails or calendar events are touched;
+ *  - same key, different fingerprint -> 409 IDEMPOTENCY_KEY_REUSED;
+ *  - a failed attempt rolls back everything, so it never burns the key.
+ * Without a key the behavior is exactly the plain creation.
+ */
+export async function createSeriesIdempotent(
+  fastify: FastifyInstance,
+  params: { studentId: string; createdBy: string; rule: unknown; skipConflicts?: boolean; idempotencyKey?: string },
+): Promise<{ result: CreateSeriesResult; replayed: boolean }> {
+  const { studentId, createdBy, skipConflicts = false, idempotencyKey } = params;
   const rule = validateSeriesRule(params.rule);
   const student = await loadStudent(fastify.drizzle, studentId);
+  const fingerprint = idempotencyKey ? seriesFingerprint(rule, skipConflicts) : null;
 
-  const committed = await fastify.drizzle.transaction(async (rawTx) => {
+  const outcome = await fastify.drizzle.transaction(async (rawTx) => {
     const tx = rawTx as unknown as DbHandle;
     const now = new Date();
+
+    if (idempotencyKey) {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`series-idempotency:${studentId}:${idempotencyKey}`}, 0))`);
+      const [existing] = await tx
+        .select()
+        .from(bookingSeries)
+        .where(and(eq(bookingSeries.studentId, studentId), eq(bookingSeries.idempotencyKey, idempotencyKey)))
+        .limit(1);
+      if (existing) {
+        if (existing.requestFingerprint !== fingerprint) {
+          throw new AppError(409, "IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was already used with a different request");
+        }
+        return { replay: await replayBody(tx, existing, studentId, now) };
+      }
+    }
     const occurrences = generateOccurrences(rule, now);
 
     // Same lock order as single bookings: credits first, then instants.
@@ -185,6 +230,8 @@ export async function createSeries(
         startDate: rule.startDate,
         requestedOccurrences: rule.occurrences,
         createdOccurrences: 0,
+        idempotencyKey: idempotencyKey ?? null,
+        requestFingerprint: fingerprint,
       })
       .returning({ id: bookingSeries.id });
 
@@ -217,13 +264,28 @@ export async function createSeries(
     if (created.length === 0) {
       throw new AppError(409, "SERIES_CONFLICTS", "Some occurrences cannot be booked", { occurrences: classified.map(toReport) });
     }
-    await tx.update(bookingSeries).set({ createdOccurrences: created.length }).where(eq(bookingSeries.id, series.id));
-
     skipped.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-    return { seriesId: series.id, created, skipped, balanceAfter: balance - created.length };
+    const balanceAfter = balance - created.length;
+    const body: CreateSeriesResult = {
+      seriesId: series.id,
+      requested: rule.occurrences,
+      created: created.length,
+      skipped,
+      creditsUsed: created.length,
+      balanceAfter,
+      bookings: created.map((c) => ({ bookingId: c.bookingId, startsAt: c.startsAt.toISOString(), meetLink: c.meetLink })),
+    };
+    // The replayable response is stored in the same transaction: no series without its answer.
+    await tx
+      .update(bookingSeries)
+      .set({ createdOccurrences: created.length, ...(idempotencyKey ? { idempotencyResponse: body } : {}) })
+      .where(eq(bookingSeries.id, series.id));
+
+    return { replay: null, seriesId: series.id, created, skipped, balanceAfter, body };
   });
 
-  const { seriesId, created, skipped, balanceAfter } = committed;
+  if (outcome.replay) return { result: outcome.replay, replayed: true };
+  const { seriesId, created, skipped, balanceAfter, body } = outcome;
 
   // ---- after commit: best-effort side effects ------------------------------------------------
   const productNames = new Map<string, string>();
@@ -272,14 +334,34 @@ export async function createSeries(
     fastify.log.error({ err }, "Failed to send series confirmation email");
   }
 
+  return { result: body, replayed: false };
+}
+
+/**
+ * The original response of a stored series. Normally read straight from `idempotency_response`;
+ * if that is missing it is rebuilt from the bookings (skipped occurrences are then unknown, so
+ * `skipped` is empty, and `balanceAfter` is the CURRENT balance).
+ */
+async function replayBody(
+  tx: DbHandle,
+  series: typeof bookingSeries.$inferSelect,
+  studentId: string,
+  now: Date,
+): Promise<CreateSeriesResult> {
+  if (series.idempotencyResponse) return series.idempotencyResponse as CreateSeriesResult;
+  const rows = await tx
+    .select({ id: bookings.id, startsAt: bookings.startsAt, meetLink: bookings.meetLink })
+    .from(bookings)
+    .where(eq(bookings.seriesId, series.id))
+    .orderBy(asc(bookings.startsAt));
   return {
-    seriesId,
-    requested: rule.occurrences,
-    created: created.length,
-    skipped,
-    creditsUsed: created.length,
-    balanceAfter,
-    bookings: created.map((c) => ({ bookingId: c.bookingId, startsAt: c.startsAt.toISOString(), meetLink: c.meetLink })),
+    seriesId: series.id,
+    requested: series.requestedOccurrences,
+    created: rows.length,
+    skipped: [],
+    creditsUsed: rows.length,
+    balanceAfter: await studentBalance(tx, studentId, now),
+    bookings: rows.map((r) => ({ bookingId: r.id, startsAt: r.startsAt.toISOString(), meetLink: r.meetLink ?? "" })),
   };
 }
 
@@ -312,7 +394,7 @@ export async function listSeries(fastify: FastifyInstance, studentId: string) {
     createdAt: s.createdAt.toISOString(),
     occurrences: rows
       .filter((r) => r.seriesId === s.id)
-      .map((r) => ({ bookingId: r.id, startsAt: r.startsAt.toISOString(), status: r.status, meetLink: r.meetLink })),
+      .map((r) => ({ bookingId: r.id, startsAt: r.startsAt.toISOString(), status: r.status, meetLink: r.meetLink ?? "" })),
   }));
 }
 

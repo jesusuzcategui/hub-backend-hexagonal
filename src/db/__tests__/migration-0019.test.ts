@@ -16,7 +16,7 @@ describe("migration 0019_blocked_slots_caldav", () => {
     const prev = journal.entries.find((e: { idx: number }) => e.idx === 18);
     expect(prev.tag).toBe("0018_order_review_reason");
     expect(entry.when).toBeGreaterThan(1791504000000);
-    const maxOther = Math.max(...journal.entries.filter((e: { idx: number }) => e.idx !== 19).map((e: { when: number }) => e.when));
+    const maxOther = Math.max(...journal.entries.filter((e: { idx: number }) => e.idx < 19).map((e: { when: number }) => e.when));
     expect(entry.when).toBeGreaterThan(maxOther);
   });
 

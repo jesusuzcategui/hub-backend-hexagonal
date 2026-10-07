@@ -106,8 +106,18 @@ export const bookingSeries = schedulingSchema.table(
     createdOccurrences: smallint("created_occurrences").notNull(),
     status: text("status").notNull().default("active"), // active | cancelled
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // Idempotent creation (POST /schedule/series with an Idempotency-Key header). All three are
+    // NULL for series created without a key. Kept for as long as the series row exists.
+    idempotencyKey: text("idempotency_key"),
+    requestFingerprint: text("request_fingerprint"),
+    idempotencyResponse: jsonb("idempotency_response"),
   },
-  (table) => [index("idx_booking_series_student_id").on(table.studentId)],
+  (table) => [
+    index("idx_booking_series_student_id").on(table.studentId),
+    uniqueIndex("uq_booking_series_student_idempotency_key")
+      .on(table.studentId, table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} IS NOT NULL`),
+  ],
 );
 
 export const bookings = schedulingSchema.table(

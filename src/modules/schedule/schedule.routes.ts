@@ -8,8 +8,8 @@ import {
   listStudentBookings,
   rescheduleStudentBooking,
 } from "./schedule.service.js";
-import { cancelSeries, createSeries, listSeries, previewSeries } from "./series.service.js";
-import { splitSeriesRequest } from "./series.js";
+import { cancelSeries, createSeriesIdempotent, listSeries, previewSeries } from "./series.service.js";
+import { parseIdempotencyKey, splitSeriesRequest } from "./series.js";
 
 export async function scheduleRoutes(fastify: FastifyInstance) {
   fastify.get("/schedule/slots", {
@@ -119,9 +119,12 @@ export async function scheduleRoutes(fastify: FastifyInstance) {
   fastify.post("/schedule/series", {
     preHandler: [fastify.authenticate],
     handler: async (req, reply) => {
+      const idempotencyKey = parseIdempotencyKey(req.headers["idempotency-key"]);
       const { rule, skipConflicts } = splitSeriesRequest(req.body);
       const userId = req.user.sub as string;
-      reply.code(201).send({ data: await createSeries(fastify, { studentId: userId, createdBy: userId, rule, skipConflicts }) });
+      const { result, replayed } = await createSeriesIdempotent(fastify, { studentId: userId, createdBy: userId, rule, skipConflicts, idempotencyKey });
+      if (replayed) reply.header("Idempotent-Replayed", "true");
+      reply.code(replayed ? 200 : 201).send({ data: result });
     },
   });
 
