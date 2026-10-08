@@ -339,7 +339,7 @@ describe.skipIf(!DB_URL)("credit balance (throwaway DB)", () => {
         payload: { slotId: await newSlot() },
       });
       expect(res.statusCode).toBe(409);
-      expect(res.json().error).toMatch(/expired/i);
+      expect(res.json().error).toMatchObject({ code: "CREDITS_EXPIRED", message: expect.stringMatching(/expired/i) });
     });
 
     it("POST /admin/students/:id/book works without creditId", async () => {

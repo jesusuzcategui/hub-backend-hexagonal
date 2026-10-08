@@ -879,13 +879,8 @@ export { getAvailableSlots };
 // --- Reschedule --------------------------------------------------------------------
 
 export async function rescheduleBooking(fastify: FastifyInstance, bookingId: string, newSlotId: string) {
-  try {
-    return await adminRescheduleBooking(fastify, { bookingId, newSlotId });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Reschedule failed";
-    const status = msg.includes("not found") ? 404 : msg.includes("already booked") || msg.includes("blocked") ? 409 : 400;
-    throw new AppError(status, "RESCHEDULE_FAILED", msg);
-  }
+  // adminRescheduleBooking throws coded AppErrors (BOOKING_NOT_FOUND, SLOT_BLOCKED, STUDENT_BUSY, ...): let them through.
+  return adminRescheduleBooking(fastify, { bookingId, newSlotId });
 }
 
 // --- Blocked slots -------------------------------------------------------------------

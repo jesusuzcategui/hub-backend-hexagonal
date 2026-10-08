@@ -309,14 +309,14 @@ describe.skipIf(!DB_URL)("calendar sync (throwaway DB + fake CalDAV)", () => {
       expect(out.occurrences.filter((o: any) => o.status === "ok")).toHaveLength(1);
     });
 
-    it("booking that slot is rejected with 'Slot is blocked' (the existing route answers 400 for it)", async () => {
+    it("booking that slot is rejected with 409 SLOT_BLOCKED", async () => {
       const student = await newStudent();
       await giveCredits(student);
       fake.resources = [vcal(timed("owner-evt-1", thu, "0600", "0700"))];
       await sync();
       const res = await fastify.inject({ method: "POST", url: "/schedule/book", headers: asUser(student), payload: { slotId: thuSlotKey("0600") } });
-      expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.body).error).toBe("Slot is blocked");
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).error).toMatchObject({ code: "SLOT_BLOCKED", message: "Slot is blocked" });
       expect(await db.select().from(bookings).where(eq(bookings.studentId, student))).toHaveLength(0);
       // the neighbouring free hour still books
       const ok = await fastify.inject({ method: "POST", url: "/schedule/book", headers: asUser(student), payload: { slotId: thuSlotKey("0700") } });
@@ -786,7 +786,7 @@ describe.skipIf(!DB_URL)("calendar sync (throwaway DB + fake CalDAV)", () => {
 
       // a booking attempt on the blocked hour returns an error that does not leak it either
       const rejected = await fastify.inject({ method: "POST", url: "/schedule/book", headers: asUser(student), payload: { slotId: thuSlotKey("0600") } });
-      expect(rejected.statusCode).toBe(400);
+      expect(rejected.statusCode).toBe(409);
       expect(rejected.body).not.toContain(SECRET_TITLE);
 
       const adminList = await fastify.inject({ method: "GET", url: "/admin/blocked-slots", headers: admin });

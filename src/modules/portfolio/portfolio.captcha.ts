@@ -1,4 +1,5 @@
 import { env } from "../../config/env.js";
+import { AppError } from "../../lib/errors.js";
 
 export interface CapCaptchaVerifyResponse {
   success: boolean;
@@ -13,7 +14,7 @@ export async function verifyCaptchaToken(token: string | undefined): Promise<voi
 
   // Si no hay token pero captcha está habilitado, error
   if (!token) {
-    throw new Error("Captcha token required");
+    throw new AppError(400, "CAPTCHA_REQUIRED", "Captcha token required");
   }
 
   const uri = `https://cap-captcha.vanjex.dev/${env.captcha.siteKey}/siteverify`;
@@ -36,6 +37,6 @@ export async function verifyCaptchaToken(token: string | undefined): Promise<voi
   console.log("[Captcha] API response:", { status: response.status, data });
 
   if (!response.ok || !data.success) {
-    throw new Error(`Captcha verification failed: ${data.error || "Unknown error"}`);
+    throw new AppError(400, "CAPTCHA_FAILED", "Captcha verification failed");
   }
 }

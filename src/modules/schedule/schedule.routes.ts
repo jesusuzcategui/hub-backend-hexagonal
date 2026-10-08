@@ -40,33 +40,21 @@ export async function scheduleRoutes(fastify: FastifyInstance) {
   fastify.post("/schedule/book", {
     preHandler: [fastify.authenticate],
     handler: async (req, reply) => {
-      const { slotId, creditId, notes } = req.body as {
-        slotId: string;
+      const { slotId, creditId, notes } = (req.body ?? {}) as {
+        slotId?: string;
         creditId?: string;
         notes?: string;
       };
 
-      if (!slotId) {
-        return reply.code(400).send({ error: "slotId required" });
-      }
+      if (!slotId) throw new AppError(400, "MISSING_FIELDS", "slotId is required");
 
-      try {
-        const result = await createStudentBooking(fastify, {
-          studentId: req.user.sub as string,
-          slotId,
-          creditId,
-          notes,
-        });
-        reply.code(201).send({ data: result });
-      } catch (err: unknown) {
-        if (err instanceof AppError) {
-          return reply.code(err.statusCode).send({ error: err.message, code: err.code });
-        }
-        const msg = err instanceof Error ? err.message : "Booking failed";
-        const code =
-          msg.includes("already booked") || msg.includes("No credits") ? 409 : 400;
-        reply.code(code).send({ error: msg });
-      }
+      const result = await createStudentBooking(fastify, {
+        studentId: req.user.sub as string,
+        slotId,
+        creditId,
+        notes,
+      });
+      reply.code(201).send({ data: result });
     },
   });
 
@@ -74,14 +62,8 @@ export async function scheduleRoutes(fastify: FastifyInstance) {
     preHandler: [fastify.authenticate],
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
-      try {
-        await cancelStudentBooking(fastify, id, req.user.sub as string);
-        reply.send({ success: true });
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Cancel failed";
-        const code = msg.includes("not found") ? 404 : 400;
-        reply.code(code).send({ error: msg });
-      }
+      await cancelStudentBooking(fastify, id, req.user.sub as string);
+      reply.send({ success: true });
     },
   });
 
@@ -89,21 +71,15 @@ export async function scheduleRoutes(fastify: FastifyInstance) {
     preHandler: [fastify.authenticate],
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
-      const { newSlotId } = req.body as { newSlotId?: string };
-      if (!newSlotId) return reply.code(400).send({ error: "newSlotId required" });
+      const { newSlotId } = (req.body ?? {}) as { newSlotId?: string };
+      if (!newSlotId) throw new AppError(400, "MISSING_FIELDS", "newSlotId is required");
 
-      try {
-        const result = await rescheduleStudentBooking(fastify, {
-          bookingId: id,
-          studentId: req.user.sub as string,
-          newSlotId,
-        });
-        reply.send({ data: result });
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : "Reschedule failed";
-        const code = msg.includes("not found") ? 404 : msg.includes("already booked") || msg.includes("blocked") ? 409 : 400;
-        reply.code(code).send({ error: msg });
-      }
+      const result = await rescheduleStudentBooking(fastify, {
+        bookingId: id,
+        studentId: req.user.sub as string,
+        newSlotId,
+      });
+      reply.send({ data: result });
     },
   });
 

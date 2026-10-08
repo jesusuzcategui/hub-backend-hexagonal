@@ -24,31 +24,20 @@ export async function portfolioRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post("/public/book", async (req, reply) => {
     const parsed = bookSlotSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.code(400).send({
-        error: { code: "VALIDATION_ERROR", message: parsed.error.flatten() },
-      });
+      throw new AppError(400, "VALIDATION_ERROR", "Invalid request", parsed.error.flatten());
     }
 
-    try {
-      // Validate captcha token
-      await verifyCaptchaToken(parsed.data.captchaToken);
+    // Validate captcha token
+    await verifyCaptchaToken(parsed.data.captchaToken);
 
-      const result = await createMentoringRequest(fastify, parsed.data);
-      reply.code(201).send({ data: result });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Booking failed";
-      const code = msg.includes("already booked") || msg.includes("is blocked") ? 409 : msg.includes("not found") ? 404 : msg.includes("Captcha") ? 400 : 400;
-      console.log("error: ", err, code);
-      reply.code(code).send({ error: msg });
-    }
+    const result = await createMentoringRequest(fastify, parsed.data);
+    reply.code(201).send({ data: result });
   });
 
   fastify.post("/public/reviews", async (req, reply) => {
     const parsed = submitReviewSchema.safeParse(req.body);
     if (!parsed.success) {
-      return reply.code(400).send({
-        error: { code: "VALIDATION_ERROR", message: parsed.error.flatten() },
-      });
+      throw new AppError(400, "VALIDATION_ERROR", "Invalid request", parsed.error.flatten());
     }
 
     try {

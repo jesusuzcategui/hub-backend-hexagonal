@@ -242,7 +242,7 @@ export async function createMentoringRequest(fastify: FastifyInstance, body: Boo
   const { slotId, name, email, whatsapp, type, message, locale = "es" } = body;
 
   const idParts = slotId.split("_");
-  if (idParts.length < 3) throw new Error("Invalid slot ID format");
+  if (idParts.length < 3) throw new AppError(400, "INVALID_SLOT", "Invalid slot ID format");
 
   const weeklySlotId = idParts[0];
   const datePart = idParts[1];
@@ -254,7 +254,7 @@ export async function createMentoringRequest(fastify: FastifyInstance, body: Boo
     .where(and(eq(weeklySlots.id, weeklySlotId), eq(weeklySlots.isActive, true)))
     .limit(1);
 
-  if (!slot) throw new Error("Slot not found");
+  if (!slot) throw new AppError(404, "SLOT_NOT_FOUND", "Slot not found");
 
   const y = datePart.substring(0, 4);
   const mo = datePart.substring(4, 6);
@@ -266,7 +266,7 @@ export async function createMentoringRequest(fastify: FastifyInstance, body: Boo
   const hEnd = pad2(parseInt(hh) + 1);
   const endsAt = new Date(`${y}-${mo}-${d}T${hEnd}:${mm}:00-05:00`);
 
-  if (startsAt <= new Date()) throw new Error("Slot is in the past");
+  if (startsAt <= new Date()) throw new AppError(409, "SLOT_IN_PAST", "Slot is in the past");
 
   let requestId: string;
 
@@ -277,7 +277,7 @@ export async function createMentoringRequest(fastify: FastifyInstance, body: Boo
       .from(blockedSlots)
       .where(and(sql`${blockedSlots.startsAt} < ${endsAt}`, sql`${blockedSlots.endsAt} > ${startsAt}`))
       .limit(1);
-    if (block) throw new Error("Slot is blocked");
+    if (block) throw new AppError(409, "SLOT_BLOCKED", "Slot is blocked");
 
     // Race check: ClickTalk booking on same slot + time
     const [existingBooking] = await tx
@@ -292,7 +292,7 @@ export async function createMentoringRequest(fastify: FastifyInstance, body: Boo
       )
       .for("update")
       .limit(1);
-    if (existingBooking) throw new Error("Slot already booked");
+    if (existingBooking) throw new AppError(409, "SLOT_TAKEN", "Slot already booked");
 
     // Race check: another mentoring request on same slot
     const [existingRequest] = await tx
@@ -306,7 +306,7 @@ export async function createMentoringRequest(fastify: FastifyInstance, body: Boo
       )
       .for("update")
       .limit(1);
-    if (existingRequest) throw new Error("Slot already booked");
+    if (existingRequest) throw new AppError(409, "SLOT_TAKEN", "Slot already booked");
 
     const [inserted] = await tx
       .insert(mentoringRequests)

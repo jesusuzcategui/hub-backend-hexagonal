@@ -349,9 +349,9 @@ export async function insertBookingInTx(
   return { bookingId, meetLink };
 }
 
-function conflictToError(conflict: BookingConflict): Error {
-  if (conflict === "blocked") return new Error("Slot is blocked");
-  if (conflict === "slot_taken") return new Error("Slot already booked");
+function conflictToError(conflict: BookingConflict): AppError {
+  if (conflict === "blocked") return new AppError(409, "SLOT_BLOCKED", "Slot is blocked");
+  if (conflict === "slot_taken") return new AppError(409, "SLOT_TAKEN", "Slot already booked");
   return new AppError(409, "STUDENT_BUSY", "You are already booked at that time");
 }
 
@@ -378,7 +378,7 @@ export async function createStudentBooking(
     .from(accounts)
     .where(eq(accounts.id, studentId))
     .limit(1);
-  if (!student[0]) throw new Error("Student not found");
+  if (!student[0]) throw new AppError(404, "STUDENT_NOT_FOUND", "Student not found");
 
   // ID formats: "uuid" (legacy availability) | "uuid_YYYYMMDD_HHMM" (weekly slot chunk)
   const idParts = slotId.split("_");
@@ -405,8 +405,8 @@ export async function createStudentBooking(
       .where(eq(weeklySlots.id, weeklySlotId))
       .limit(1);
 
-    if (!slot[0]) throw new Error("Weekly slot not found");
-    if (!slot[0].isActive) throw new Error("Weekly slot is not active");
+    if (!slot[0]) throw new AppError(404, "SLOT_NOT_FOUND", "Weekly slot not found");
+    if (!slot[0].isActive) throw new AppError(409, "SLOT_NOT_AVAILABLE", "Weekly slot is not active");
 
     const y = datePart.substring(0, 4);
     const mo = datePart.substring(4, 6);
@@ -422,20 +422,20 @@ export async function createStudentBooking(
     const dowMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
     const suppliedDow = dowMap[bogotaDay] ?? -1;
     if (suppliedDow !== slot[0].dayOfWeek) {
-      throw new Error("Invalid slot: date does not match slot day-of-week");
+      throw new AppError(400, "INVALID_SLOT", "Invalid slot: date does not match slot day-of-week");
     }
 
     // Validate the chunk start time is a legitimate hour-chunk of this slot's range
     const validChunks = hourChunks(slot[0].startTime, slot[0].endTime).map((c) => c.chunkStart);
     if (!validChunks.includes(chunkStartHHMM)) {
-      throw new Error("Invalid slot: time is not a valid hour chunk of this slot");
+      throw new AppError(400, "INVALID_SLOT", "Invalid slot: time is not a valid hour chunk of this slot");
     }
 
     const hEnd = pad2(parseInt(hh) + 1); // always 1-hour slot
     startsAt = new Date(`${y}-${mo}-${d}T${hh}:${mm}:00-05:00`);
     endsAt = new Date(`${y}-${mo}-${d}T${hEnd}:${mm}:00-05:00`);
 
-    if (startsAt <= new Date()) throw new Error("Slot is in the past");
+    if (startsAt <= new Date()) throw new AppError(409, "SLOT_IN_PAST", "Slot is in the past");
   } else {
     availabilityId = slotId;
     const [avail] = await fastify.drizzle
@@ -443,8 +443,8 @@ export async function createStudentBooking(
       .from(availabilities)
       .where(eq(availabilities.id, slotId))
       .limit(1);
-    if (!avail) throw new Error("Slot not found");
-    if (avail.isBooked) throw new Error("Slot already booked");
+    if (!avail) throw new AppError(404, "SLOT_NOT_FOUND", "Slot not found");
+    if (avail.isBooked) throw new AppError(409, "SLOT_TAKEN", "Slot already booked");
     startsAt = avail.startsAt;
     endsAt = avail.endsAt;
   }
@@ -467,7 +467,7 @@ export async function createStudentBooking(
         .from(classCredits)
         .where(and(eq(classCredits.id, creditId), eq(classCredits.userId, studentId)))
         .for("update");
-      if (!explicit) throw new Error("Credit not found");
+      if (!explicit) throw new AppError(404, "CREDIT_NOT_FOUND", "Credit not found");
       // consumeCredit=false: this credit was already consumed by the booking
       // being replaced (reschedule) — don't re-check remaining balance or
       // expiry (a class booked while valid is honored) and don't increment
@@ -478,7 +478,7 @@ export async function createStudentBooking(
       }
       credit = explicit;
     } else {
-      if (!consumeCredit) throw new Error("creditId is required when not consuming a credit");
+      if (!consumeCredit) throw new AppError(400, "MISSING_FIELDS", "creditId is required when not consuming a credit");
       // Lock every block of the student so two concurrent bookings cannot pick the same one.
       const blocksOfStudent = await tx
         .select()
@@ -661,14 +661,14 @@ export async function cancelStudentBooking(
     .where(and(eq(bookings.id, bookingId), eq(bookings.studentId, userId)))
     .limit(1);
 
-  if (!booking) throw new Error("Booking not found");
+  if (!booking) throw new AppError(404, "BOOKING_NOT_FOUND", "Booking not found");
   if (booking.status === "cancelled" || booking.status === "completed") {
-    throw new Error("Booking cannot be cancelled");
+    throw new AppError(409, "BOOKING_NOT_CANCELLABLE", "Booking cannot be cancelled");
   }
 
   const cutoff = new Date(Date.now() + 24 * 60 * 60 * 1000);
   if (booking.startsAt <= cutoff) {
-    throw new Error("Cannot cancel within 24 hours of class");
+    throw new AppError(409, "CANCEL_CUTOFF", "Cannot cancel within 24 hours of class");
   }
 
   await fastify.drizzle.transaction(async (tx) => {
@@ -741,7 +741,7 @@ async function rescheduleBookingInternal(fastify: FastifyInstance, booking: Resc
       .update(bookings)
       .set({ status: "cancelled", cancelledAt: new Date(), cancelReason: "Reschedule race — source booking already changed" })
       .where(eq(bookings.id, result.bookingId));
-    throw new Error("Booking was already modified — reschedule aborted");
+    throw new AppError(409, "BOOKING_MODIFIED", "Booking was already modified — reschedule aborted");
   }
 
   if (booking.availabilityId) {
@@ -775,14 +775,14 @@ export async function rescheduleStudentBooking(
     .where(and(eq(bookings.id, bookingId), eq(bookings.studentId, studentId)))
     .limit(1);
 
-  if (!booking) throw new Error("Booking not found");
+  if (!booking) throw new AppError(404, "BOOKING_NOT_FOUND", "Booking not found");
   if (booking.status === "cancelled" || booking.status === "completed") {
-    throw new Error("Booking cannot be rescheduled");
+    throw new AppError(409, "BOOKING_NOT_RESCHEDULABLE", "Booking cannot be rescheduled");
   }
 
   const cutoff = new Date(Date.now() + 24 * 60 * 60 * 1000);
   if (booking.startsAt <= cutoff) {
-    throw new Error("Cannot reschedule within 24 hours of class");
+    throw new AppError(409, "RESCHEDULE_CUTOFF", "Cannot reschedule within 24 hours of class");
   }
 
   return rescheduleBookingInternal(fastify, booking, newSlotId);
@@ -801,9 +801,9 @@ export async function adminRescheduleBooking(
     .where(eq(bookings.id, bookingId))
     .limit(1);
 
-  if (!booking) throw new Error("Booking not found");
+  if (!booking) throw new AppError(404, "BOOKING_NOT_FOUND", "Booking not found");
   if (booking.status === "cancelled" || booking.status === "completed") {
-    throw new Error("Booking cannot be rescheduled");
+    throw new AppError(409, "BOOKING_NOT_RESCHEDULABLE", "Booking cannot be rescheduled");
   }
 
   return rescheduleBookingInternal(fastify, booking, newSlotId);
