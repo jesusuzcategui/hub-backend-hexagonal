@@ -19,11 +19,6 @@ export async function verifyCaptchaToken(token: string | undefined): Promise<voi
 
   const uri = `https://cap-captcha.vanjex.dev/${env.captcha.siteKey}/siteverify`;
 
-  console.log("[Captcha] Verifying token:", uri);
-  console.log("[Captcha] ", env.captcha.siteKey);
-  console.log("[Captcha] ", env.captcha.privateKey);
-  console.log("[Captcha] ", token);
-
   const response = await fetch(uri, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -34,8 +29,6 @@ export async function verifyCaptchaToken(token: string | undefined): Promise<voi
   });
 
   const data = (await response.json()) as CapCaptchaVerifyResponse;
-  console.log("[Captcha] API response:", { status: response.status, data });
-
   if (!response.ok || !data.success) {
     throw new AppError(400, "CAPTCHA_FAILED", "Captcha verification failed");
   }

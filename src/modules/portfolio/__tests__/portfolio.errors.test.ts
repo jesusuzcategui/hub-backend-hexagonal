@@ -40,6 +40,20 @@ describe("verifyCaptchaToken error codes", () => {
     expect([err.statusCode, err.code]).toEqual([400, "CAPTCHA_FAILED"]);
     expect(err.message).not.toContain("invalid-input-response");
   });
+
+  it("never writes the private key or the token to any log", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
+
+    await verifyCaptchaToken("secret-visitor-token");
+
+    const logged = [log, info, warn, error].flatMap((spy) => spy.mock.calls.flat().map(String)).join("\n");
+    expect(logged).not.toContain("priv");
+    expect(logged).not.toContain("secret-visitor-token");
+  });
 });
 
 describe("POST /public/book error envelope", () => {
