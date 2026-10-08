@@ -67,6 +67,7 @@ Stack: Fastify 5 + TypeScript + PostgreSQL + Redis (opcional) + MercadoPago + Go
 | `TOKEN_EXPIRED` | 401 | Access token expirado |
 | `TOKEN_REVOKED` | 401 | Refresh token ya usado o revocado |
 | `INSUFFICIENT_CREDITS` | 422 | Sin créditos de clase disponibles |
+| `CLASS_AFTER_CREDIT_EXPIRY` | 409 | La fecha de la clase (reserva, ocurrencia de serie o reprogramación) cae después del vencimiento del crédito que la paga. `details`: `{ creditExpiresAt, classStartsAt }` o `{ latestCreditExpiry, classStartsAt }` |
 | `SLOT_ALREADY_BOOKED` | 409 | Slot reservado entre la consulta y el booking |
 | `ORDER_ALREADY_PAID` | 409 | Webhook duplicado de MercadoPago |
 | `PRODUCT_NOT_ACTIVE` | 422 | Producto desactivado al momento del checkout |
@@ -367,7 +368,10 @@ CREATE TABLE scheduling.class_credits (
   product_id    UUID        NOT NULL REFERENCES ecommerce.products(id) ON DELETE RESTRICT,
   total_credits SMALLINT    NOT NULL CHECK (total_credits > 0),
   used_credits  SMALLINT    NOT NULL DEFAULT 0 CHECK (used_credits >= 0),
-  expires_at    TIMESTAMPTZ,   -- NULL = sin expiración
+  -- NULL = sin expiración. Una clase solo puede reservarse con fecha (calendario Bogotá) <= día de
+  -- vencimiento, inclusive; las ocurrencias de una serie que lo superan se reportan como
+  -- `after_credit_expiry`. Ver modules/schedule/credit-balance.ts.
+  expires_at    TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT chk_credits_used CHECK (used_credits <= total_credits)
 );

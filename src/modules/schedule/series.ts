@@ -7,7 +7,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { AppError } from "../../lib/errors.js";
-import { pickCreditBlock, type CreditBlockLike } from "./credit-balance.js";
+import { pickCreditBlockForDate, type CreditBlockLike } from "./credit-balance.js";
 import { hourChunks, pad2 } from "./slot-time.js";
 
 /** The LAST occurrence may be at most this many weeks after `startDate`. */
@@ -165,7 +165,7 @@ export function generateOccurrences(rule: SeriesRule, now: Date): SeriesOccurren
   return out;
 }
 
-export type OccurrenceReason = "no_slot" | "slot_taken" | "blocked" | "student_busy" | "in_past";
+export type OccurrenceReason = "no_slot" | "slot_taken" | "blocked" | "student_busy" | "in_past" | "after_credit_expiry";
 export type OccurrenceStatus = "ok" | OccurrenceReason;
 
 export interface ClassifyContext {
@@ -190,7 +190,8 @@ const overlaps = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) => aStart 
 
 /**
  * Decides, per occurrence, whether it can be booked. First matching reason wins:
- * in_past, no_slot, blocked, slot_taken, student_busy. Pure: callers load the context.
+ * in_past, no_slot, blocked, slot_taken, student_busy (after_credit_expiry is added later by
+ * applyCreditCoverage, only for occurrences that would otherwise be ok). Pure: callers load the context.
  */
 export function classifyOccurrences(occurrences: readonly SeriesOccurrence[], ctx: ClassifyContext): ClassifiedOccurrence[] {
   const takenKeys = new Set(ctx.taken.map((t) => `${t.weeklySlotId}_${t.startsAt.getTime()}`));
@@ -219,25 +220,61 @@ export function classifyOccurrences(occurrences: readonly SeriesOccurrence[], ct
   });
 }
 
+export type CreditAllocation =
+  | { creditId: string }
+  | { creditId: null; reason: "after_credit_expiry" | "no_credits" };
+
 /**
- * Which credit block pays for each of `n` occurrences: pickCreditBlock applied repeatedly over
- * COPIES of the blocks (inputs are never mutated). `complete` is false when the usable balance is
- * smaller than `n`; `creditIds` then holds only what could be allocated.
+ * Which credit block pays for each occurrence, in the order given (chronological). Per occurrence:
+ * the earliest-expiring usable block with credit left that COVERS that occurrence's date
+ * (pickCreditBlockForDate), over COPIES of the blocks (inputs are never mutated).
+ *  - `after_credit_expiry`: spendable credit remains, but every such block expires before the class;
+ *  - `no_credits`: no spendable credit remains at all (the balance is simply too small).
  */
-export function allocateCredits<T extends CreditBlockLike & { id: string }>(
+export function allocateCreditsByDate<T extends CreditBlockLike & { id: string }>(
   blocks: readonly T[],
-  n: number,
+  startsAts: readonly Date[],
   now: Date,
-): { creditIds: string[]; complete: boolean } {
+): CreditAllocation[] {
   const working = blocks.map((b) => ({ ...b }));
-  const creditIds: string[] = [];
-  for (let i = 0; i < n; i++) {
-    const picked = pickCreditBlock(working, now);
-    if (!picked) break;
-    picked.usedCredits += 1;
-    creditIds.push(picked.id);
-  }
-  return { creditIds, complete: creditIds.length === n };
+  return startsAts.map((startsAt) => {
+    const picked = pickCreditBlockForDate(working, now, startsAt);
+    if (picked.ok) {
+      picked.block.usedCredits += 1;
+      return { creditId: picked.block.id };
+    }
+    return { creditId: null, reason: picked.reason === "no_usable" ? "no_credits" : "after_credit_expiry" };
+  });
+}
+
+/**
+ * Adds the credit-expiry rule on top of classifyOccurrences: every occurrence that would be `ok`
+ * is matched to the block that pays for it (chronologically); those no block covers become
+ * `after_credit_expiry` (a conflict like any other). `creditByStart` maps the startsAt epoch ms of
+ * each funded occurrence to its block; `unfunded` counts the `ok` occurrences left without credit
+ * because the balance ran out (the INSUFFICIENT_CREDITS case, not a date problem).
+ */
+export function applyCreditCoverage<T extends CreditBlockLike & { id: string }>(
+  occurrences: readonly ClassifiedOccurrence[],
+  blocks: readonly T[],
+  now: Date,
+): { occurrences: ClassifiedOccurrence[]; creditByStart: Map<number, string>; unfunded: number } {
+  const oks = occurrences.filter((o) => o.status === "ok").sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+  const allocation = allocateCreditsByDate(blocks, oks.map((o) => o.startsAt), now);
+  const creditByStart = new Map<number, string>();
+  const expired = new Set<number>();
+  let unfunded = 0;
+  oks.forEach((o, i) => {
+    const a = allocation[i];
+    if (a.creditId !== null) creditByStart.set(o.startsAt.getTime(), a.creditId);
+    else if (a.reason === "after_credit_expiry") expired.add(o.startsAt.getTime());
+    else unfunded += 1;
+  });
+  return {
+    occurrences: occurrences.map((o) => (expired.has(o.startsAt.getTime()) && o.status === "ok" ? { ...o, status: "after_credit_expiry" as const } : o)),
+    creditByStart,
+    unfunded,
+  };
 }
 
 /** Splits a request body into the rule (validated) and the `skipConflicts` flag (default false). */

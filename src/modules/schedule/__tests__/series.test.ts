@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { AppError } from "../../../lib/errors";
 import {
   MAX_SERIES_HORIZON_WEEKS,
-  allocateCredits,
+  allocateCreditsByDate,
+  applyCreditCoverage,
   classifyOccurrences,
   generateOccurrences,
   splitSeriesRequest,
@@ -274,7 +275,7 @@ describe("classifyOccurrences", () => {
   });
 });
 
-describe("allocateCredits", () => {
+describe("allocateCreditsByDate", () => {
   const mk = (id: string, total: number, used: number, expiresInDays: number | null, createdDaysAgo: number) => ({
     id,
     totalCredits: total,
@@ -282,37 +283,68 @@ describe("allocateCredits", () => {
     expiresAt: expiresInDays === null ? null : new Date(NOW.getTime() + expiresInDays * 24 * H),
     createdAt: new Date(NOW.getTime() - createdDaysAgo * 24 * H),
   });
+  const at = (days: number) => new Date(NOW.getTime() + days * 24 * H);
 
   it("consumes the block that expires first, then the next, one credit per occurrence", () => {
     const blocks = [mk("late", 5, 0, 30, 10), mk("soon", 3, 0, 5, 20)];
-    const out = allocateCredits(blocks, 6, NOW);
-    expect(out.complete).toBe(true);
-    expect(out.creditIds).toEqual(["soon", "soon", "soon", "late", "late", "late"]);
+    const out = allocateCreditsByDate(blocks, [1, 2, 3, 4, 5, 6].map(at), NOW);
+    expect(out.map((o) => o.creditId)).toEqual(["soon", "soon", "soon", "late", "late", "late"]);
   });
 
-  it("does not mutate the input blocks", () => {
-    const blocks = [mk("a", 2, 0, 5, 1), mk("b", 2, 0, 9, 1)];
-    allocateCredits(blocks, 3, NOW);
-    expect(blocks.map((b) => b.usedCredits)).toEqual([0, 0]);
+  it("assigns per occurrence: the early block only covers the early dates", () => {
+    const blocks = [mk("early", 5, 0, 10, 20), mk("late", 5, 0, 40, 10)];
+    const out = allocateCreditsByDate(blocks, [2, 12, 20].map(at), NOW);
+    expect(out.map((o) => o.creditId)).toEqual(["early", "late", "late"]);
   });
 
-  it("ignores expired and exhausted blocks", () => {
+  it("marks occurrences no block covers as after_credit_expiry (blocks with credit exist)", () => {
+    const out = allocateCreditsByDate([mk("a", 5, 0, 10, 1)], [2, 12, 13].map(at), NOW);
+    expect(out).toEqual([
+      { creditId: "a" },
+      { creditId: null, reason: "after_credit_expiry" },
+      { creditId: null, reason: "after_credit_expiry" },
+    ]);
+  });
+
+  it("marks occurrences as no_credits when nothing with credit is left at all", () => {
+    const out = allocateCreditsByDate([mk("a", 1, 0, 30, 1)], [1, 2].map(at), NOW);
+    expect(out).toEqual([{ creditId: "a" }, { creditId: null, reason: "no_credits" }]);
+  });
+
+  it("does not mutate the input blocks and ignores expired and exhausted ones", () => {
     const blocks = [mk("expired", 5, 0, -1, 40), mk("full", 2, 2, 10, 5), mk("ok", 2, 1, 10, 3)];
-    const out = allocateCredits(blocks, 1, NOW);
-    expect(out).toEqual({ creditIds: ["ok"], complete: true });
+    const out = allocateCreditsByDate(blocks, [at(1)], NOW);
+    expect(out).toEqual([{ creditId: "ok" }]);
+    expect(blocks.map((b) => b.usedCredits)).toEqual([0, 2, 1]);
   });
 
-  it("reports incomplete when the balance is not enough (and allocates what exists)", () => {
-    const blocks = [mk("a", 2, 0, 5, 1), mk("expired", 9, 0, -2, 1)];
-    const out = allocateCredits(blocks, 5, NOW);
-    expect(out.complete).toBe(false);
-    expect(out.creditIds).toEqual(["a", "a"]);
+  it("never-expiring blocks go last and cover any date", () => {
+    const out = allocateCreditsByDate([mk("never", 1, 0, null, 1), mk("dated", 1, 0, 3, 1)], [1, 100].map(at), NOW);
+    expect(out.map((o) => o.creditId)).toEqual(["dated", "never"]);
+    expect(allocateCreditsByDate([], [], NOW)).toEqual([]);
+  });
+});
+
+describe("applyCreditCoverage", () => {
+  const H24 = 24 * H;
+  const occ = (days: number, status: "ok" | "blocked" = "ok") => {
+    const startsAt = new Date(NOW.getTime() + days * H24);
+    return { startsAt, endsAt: new Date(startsAt.getTime() + H), status, date: "", time: "", weekday: 0, dateKey: "", timeKey: "", weeklySlotId: "s", slotId: "s_x" } as any;
+  };
+  const blk = { id: "a", totalCredits: 5, usedCredits: 0, expiresAt: new Date(NOW.getTime() + 10 * H24), createdAt: new Date(NOW.getTime() - H24) };
+
+  it("flips ok occurrences past the credit expiry to after_credit_expiry and leaves other statuses alone", () => {
+    const { occurrences, creditByStart, unfunded } = applyCreditCoverage([occ(2), occ(3, "blocked"), occ(12)], [blk], NOW);
+    expect(occurrences.map((o) => o.status)).toEqual(["ok", "blocked", "after_credit_expiry"]);
+    expect([...creditByStart.values()]).toEqual(["a"]);
+    expect(unfunded).toBe(0);
   });
 
-  it("zero requested is trivially complete; never-expiring blocks go last", () => {
-    expect(allocateCredits([], 0, NOW)).toEqual({ creditIds: [], complete: true });
-    const out = allocateCredits([mk("never", 1, 0, null, 1), mk("dated", 1, 0, 3, 1)], 2, NOW);
-    expect(out.creditIds).toEqual(["dated", "never"]);
+  it("counts ok occurrences nobody can pay for as unfunded (they stay ok)", () => {
+    const one = { ...blk, totalCredits: 1 };
+    const { occurrences, unfunded } = applyCreditCoverage([occ(1), occ(2)], [one], NOW);
+    expect(occurrences.map((o) => o.status)).toEqual(["ok", "ok"]);
+    expect(unfunded).toBe(1);
   });
 });
 

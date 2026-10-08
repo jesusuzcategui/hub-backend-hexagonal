@@ -190,8 +190,8 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
   describe("createSeries", () => {
     it("Monday+Wednesday 06:00 weekly x8 with 10 credits: 8 bookings, deducted across blocks in expiry order, 2 left", async () => {
       const s = await newStudent("es", "Ana");
-      const soon = await addBlock(s.id, 6, 10, 5); // expires first even though created later
-      const later = await addBlock(s.id, 4, 40, 9);
+      const soon = await addBlock(s.id, 6, 30, 5); // expires first even though created later
+      const later = await addBlock(s.id, 4, 60, 9);
 
       const out = await createSeries(fastify, { studentId: s.id, createdBy: s.id, rule: monWed8() });
 
@@ -221,7 +221,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("an admin can create it on behalf of the student (created_by = admin)", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 8, 30);
+      await addBlock(s.id, 8, 60);
       const out = await createSeries(fastify, { studentId: s.id, createdBy: teacherId, rule: monWed8({ occurrences: 2 }) });
       const [series] = await seriesRows(s.id);
       expect(series.createdBy).toBe(teacherId);
@@ -230,7 +230,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("balance 5 and 8 requested: 409 INSUFFICIENT_CREDITS, zero rows, zero credits consumed", async () => {
       const s = await newStudent();
-      const block = await addBlock(s.id, 5, 30);
+      const block = await addBlock(s.id, 5, 60);
 
       const err = await expectAppError(createSeries(fastify, { studentId: s.id, createdBy: s.id, rule: monWed8() }), 409, "INSUFFICIENT_CREDITS");
 
@@ -245,7 +245,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
     it("expired blocks do not count towards the balance", async () => {
       const s = await newStudent();
       await addBlock(s.id, 9, -1, 70); // expired yesterday
-      const ok = await addBlock(s.id, 1, 30);
+      const ok = await addBlock(s.id, 1, 60);
       const err = await expectAppError(createSeries(fastify, { studentId: s.id, createdBy: s.id, rule: monWed8({ occurrences: 2 }) }), 409, "INSUFFICIENT_CREDITS");
       expect(err.details).toEqual({ required: 2, balance: 1 });
       expect(await used(ok)).toBe(0);
@@ -254,8 +254,8 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
     it("one conflicting occurrence with skipConflicts=false: 409 SERIES_CONFLICTS with the per-occurrence report, nothing created", async () => {
       const s = await newStudent();
       const other = await newStudent();
-      const block = await addBlock(s.id, 8, 30);
-      await addBlock(other.id, 1, 30);
+      const block = await addBlock(s.id, 8, 60);
+      await addBlock(other.id, 1, 60);
       const rule = monWed8();
       const occ = generateOccurrences(validateSeriesRule(rule), new Date());
       // someone else holds occurrence #3 (index 2)
@@ -276,8 +276,8 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
     it("with skipConflicts=true the ok ones are created and the skipped ones are reported", async () => {
       const s = await newStudent();
       const other = await newStudent();
-      const block = await addBlock(s.id, 8, 30);
-      await addBlock(other.id, 1, 30);
+      const block = await addBlock(s.id, 8, 60);
+      await addBlock(other.id, 1, 60);
       const rule = monWed8();
       const occ = generateOccurrences(validateSeriesRule(rule), new Date());
       const monSlot = (await db.select().from(weeklySlots).where(and(eq(weeklySlots.dayOfWeek, 1), eq(weeklySlots.teacherId, teacherId))))[0].id;
@@ -295,7 +295,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("skipConflicts=true still returns INSUFFICIENT_CREDITS when the ok ones exceed the balance", async () => {
       const s = await newStudent();
-      const block = await addBlock(s.id, 3, 30);
+      const block = await addBlock(s.id, 3, 60);
       const err = await expectAppError(createSeries(fastify, { studentId: s.id, createdBy: s.id, rule: monWed8(), skipConflicts: true }), 409, "INSUFFICIENT_CREDITS");
       expect(err.details).toEqual({ required: 8, balance: 3 });
       expect(await used(block)).toBe(0);
@@ -304,7 +304,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("every occurrence conflicting with skipConflicts=true creates nothing (409 SERIES_CONFLICTS)", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 8, 30);
+      await addBlock(s.id, 8, 60);
       await db.update(weeklySlots).set({ isActive: false }).where(inArray(weeklySlots.id, ownSlotIds));
       const err = await expectAppError(createSeries(fastify, { studentId: s.id, createdBy: s.id, rule: monWed8(), skipConflicts: true }), 409, "SERIES_CONFLICTS");
       expect(((err.details as any).occurrences as any[]).every((o: any) => o.status === "no_slot")).toBe(true);
@@ -314,8 +314,8 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
     it("two concurrent createSeries for the same slots: exactly one wins, the other gets 409 and leaks no credits", async () => {
       const a = await newStudent();
       const b = await newStudent();
-      const blockA = await addBlock(a.id, 8, 30);
-      const blockB = await addBlock(b.id, 8, 30);
+      const blockA = await addBlock(a.id, 8, 60);
+      const blockB = await addBlock(b.id, 8, 60);
       // open pool connections so both transactions really overlap
       await Promise.all(Array.from({ length: 6 }, () => pool.query("select pg_sleep(0.05)")));
 
@@ -343,7 +343,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("student_busy: the student already has a booking at that hour (even on another weekly slot)", async () => {
       const s = await newStudent();
-      const block = await addBlock(s.id, 8, 30);
+      const block = await addBlock(s.id, 8, 60);
       const rule = monWed8({ occurrences: 2 });
       const occ = generateOccurrences(validateSeriesRule(rule), new Date());
       // a second weekly slot at the same Monday 06:00 holding a booking of this same student
@@ -360,7 +360,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("single bookings now also refuse a student overlapping booking (STUDENT_BUSY)", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 8, 30);
+      await addBlock(s.id, 8, 60);
       const rule = monWed8({ occurrences: 1 });
       const occ = generateOccurrences(validateSeriesRule(rule), new Date());
       const monSlot = ownSlotIds[0];
@@ -376,7 +376,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("rejects invalid rules with 400 VALIDATION_ERROR and an unknown student with 404", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 8, 30);
+      await addBlock(s.id, 8, 60);
       await expectAppError(createSeries(fastify, { studentId: s.id, createdBy: s.id, rule: monWed8({ occurrences: 0 }) }), 400, "VALIDATION_ERROR");
       await expectAppError(createSeries(fastify, { studentId: s.id, createdBy: s.id, rule: monWed8({ startDate: bogotaDate(-2) }) }), 400, "VALIDATION_ERROR");
       await expectAppError(createSeries(fastify, { studentId: teacherId, createdBy: teacherId, rule: monWed8() }), 404, "STUDENT_NOT_FOUND");
@@ -386,7 +386,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
   describe("previewSeries", () => {
     it("returns per-occurrence status, required and balance, and writes nothing", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 5, 30);
+      await addBlock(s.id, 5, 60);
       const rule = monWed8();
       const out = await previewSeries(fastify, { studentId: s.id, rule });
       expect(out).toMatchObject({ requested: 8, required: 8, balance: 5, sufficientCredits: false });
@@ -400,8 +400,8 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
   describe("cancelSeries", () => {
     async function seed8() {
       const s = await newStudent("en", "Bea");
-      const soon = await addBlock(s.id, 6, 10, 5);
-      const later = await addBlock(s.id, 4, 40, 9);
+      const soon = await addBlock(s.id, 6, 30, 5);
+      const later = await addBlock(s.id, 4, 60, 9);
       const out = await createSeries(fastify, { studentId: s.id, createdBy: s.id, rule: monWed8() });
       sendMail.mockClear();
       return { s, soon, later, out };
@@ -492,7 +492,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
   describe("listSeries", () => {
     it("lists the student's series with their occurrences", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 8, 30);
+      await addBlock(s.id, 8, 60);
       const out = await createSeries(fastify, { studentId: s.id, createdBy: s.id, rule: monWed8({ occurrences: 3 }) });
       const list = await listSeries(fastify, s.id);
       expect(list).toHaveLength(1);
@@ -512,7 +512,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
   describe("reminders", () => {
     it("the reminder runner picks up series occurrences like any other booking", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 8, 30);
+      await addBlock(s.id, 8, 60);
       const out = await createSeries(fastify, { studentId: s.id, createdBy: s.id, rule: monWed8({ occurrences: 2 }) });
       const rows = await seriesBookings(out.seriesId);
       await db
@@ -530,7 +530,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("student: preview, create (201), list, cancel; 409 bodies carry details", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 5, 30);
+      await addBlock(s.id, 5, 60);
       const body = monWed8({ occurrences: 4 });
 
       const prev = await fastify.inject({ method: "POST", url: "/schedule/series/preview", headers: asUser(s.id), payload: body });
@@ -574,8 +574,8 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
     it("a student cannot pass someone else's studentId in the body", async () => {
       const s = await newStudent();
       const victim = await newStudent();
-      await addBlock(s.id, 2, 30);
-      await addBlock(victim.id, 2, 30);
+      await addBlock(s.id, 2, 60);
+      await addBlock(victim.id, 2, 60);
       const res = await fastify.inject({ method: "POST", url: "/schedule/series", headers: asUser(s.id), payload: { ...monWed8({ occurrences: 1 }), studentId: victim.id } });
       expect(res.statusCode).toBe(201);
       expect(await studentBookings(victim.id)).toHaveLength(0);
@@ -584,7 +584,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("admin: preview/create/list for a student, cancel by series id; students get 403", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 8, 30);
+      await addBlock(s.id, 8, 60);
       const admin = asUser(teacherId, "admin");
       const body = monWed8({ occurrences: 3 });
 
@@ -625,7 +625,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("a retry with the same key replays the original body: nothing new is created, charged, mailed or synced", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 10, 30);
+      await addBlock(s.id, 10, 60);
       const body = monWed8({ occurrences: 4 });
 
       const first = await post(s.id, "key-retry-0001", body);
@@ -650,8 +650,8 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
     it("replays skipped occurrences and balanceAfter exactly, even after the balance changed", async () => {
       const s = await newStudent();
       const other = await newStudent();
-      await addBlock(s.id, 10, 30);
-      await addBlock(other.id, 5, 30);
+      await addBlock(s.id, 10, 60);
+      await addBlock(other.id, 5, 60);
       const body = { ...monWed8({ occurrences: 4 }), skipConflicts: true };
       // `other` takes the first Monday 06:00, so that occurrence is skipped for `s`.
       await createSeries(fastify, { studentId: other.id, createdBy: other.id, rule: monWed8({ occurrences: 1 }) });
@@ -659,7 +659,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
       const first = await post(s.id, "key-skipped-01", body);
       expect(first.statusCode).toBe(201);
       expect(first.json().data.skipped).toHaveLength(1);
-      await addBlock(s.id, 7, 30); // balance changes after the fact
+      await addBlock(s.id, 7, 60); // balance changes after the fact
       const again = await post(s.id, "key-skipped-01", body);
       expect(again.statusCode).toBe(200);
       expect(again.json()).toEqual(first.json());
@@ -667,7 +667,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("rebuilds the replay from the bookings when the stored response is missing", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 10, 30);
+      await addBlock(s.id, 10, 60);
       const body = monWed8({ occurrences: 3 });
       const first = await post(s.id, "key-rebuild-01", body);
       await db.update(bookingSeries).set({ idempotencyResponse: null }).where(eq(bookingSeries.studentId, s.id));
@@ -684,7 +684,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("the same key with a different body answers 409 IDEMPOTENCY_KEY_REUSED and creates nothing", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 20, 30);
+      await addBlock(s.id, 20, 60);
       expect((await post(s.id, "key-reused-001", monWed8({ occurrences: 3 }))).statusCode).toBe(201);
 
       const different = await post(s.id, "key-reused-001", monWed8({ occurrences: 4 }));
@@ -698,7 +698,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("the fingerprint ignores key order and skipConflicts:false vs absent", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 20, 30);
+      await addBlock(s.id, 20, 60);
       const a = monWed8({ occurrences: 3 });
       const first = await post(s.id, "key-fprint-001", a);
       const reordered = { occurrences: 3, startDate: a.startDate, intervalWeeks: 1, skipConflicts: false, pattern: [{ time: "06:00", weekday: 1 }, { time: "06:00", weekday: 3 }] };
@@ -709,7 +709,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("two parallel requests with the same key create exactly one series and charge once", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 10, 30);
+      await addBlock(s.id, 10, 60);
       const body = monWed8({ occurrences: 4 });
 
       const [r1, r2] = await Promise.all([post(s.id, "key-parallel-01", body), post(s.id, "key-parallel-01", body)]);
@@ -724,7 +724,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("a failed request does not burn the key", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 2, 30);
+      await addBlock(s.id, 2, 60);
       const body = monWed8({ occurrences: 4 });
 
       const noCredits = await post(s.id, "key-failed-0001", body);
@@ -732,7 +732,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
       expect(noCredits.json().error.code).toBe("INSUFFICIENT_CREDITS");
       expect(await seriesRows(s.id)).toHaveLength(0);
 
-      await addBlock(s.id, 5, 30);
+      await addBlock(s.id, 5, 60);
       const retry = await post(s.id, "key-failed-0001", body);
       expect(retry.statusCode).toBe(201);
       expect(retry.headers["idempotent-replayed"]).toBeUndefined();
@@ -741,7 +741,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("without a key the behavior is unchanged: two identical requests create two series", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 20, 30);
+      await addBlock(s.id, 20, 60);
       const body = monWed8({ occurrences: 2 });
       const a = await post(s.id, undefined, body);
       expect(a.statusCode).toBe(201);
@@ -755,7 +755,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it.each(["short", "has space 123", "bad/char/1234", "x".repeat(129), "ñandú-12345"])("rejects the invalid key %j with 400 VALIDATION_ERROR", async (key) => {
       const s = await newStudent();
-      await addBlock(s.id, 5, 30);
+      await addBlock(s.id, 5, 60);
       const res = await post(s.id, key, monWed8({ occurrences: 2 }));
       expect(res.statusCode).toBe(400);
       expect(res.json().error.code).toBe("VALIDATION_ERROR");
@@ -764,7 +764,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("accepts boundary keys of 8 and 128 characters", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 10, 30);
+      await addBlock(s.id, 10, 60);
       expect((await post(s.id, "A-_z0189", monWed8({ occurrences: 2 }))).statusCode).toBe(201);
       expect((await post(s.id, "k".repeat(128), monWed8({ occurrences: 2, pattern: [{ weekday: 3, time: "07:00" }] }))).statusCode).toBe(201);
     });
@@ -772,8 +772,8 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
     it("the key is scoped per student: two students may use the same key", async () => {
       const a = await newStudent();
       const b = await newStudent();
-      await addBlock(a.id, 5, 30);
-      await addBlock(b.id, 5, 30);
+      await addBlock(a.id, 5, 60);
+      await addBlock(b.id, 5, 60);
       const body = monWed8({ occurrences: 2 });
       const ra = await post(a.id, "shared-key-001", body);
       const rb = await post(b.id, "shared-key-001", { ...body, pattern: [{ weekday: 1, time: "07:00" }, { weekday: 3, time: "07:00" }] });
@@ -795,7 +795,7 @@ describe.skipIf(!DB_URL)("booking series (throwaway DB)", () => {
 
     it("preview ignores the header", async () => {
       const s = await newStudent();
-      await addBlock(s.id, 5, 30);
+      await addBlock(s.id, 5, 60);
       const res = await fastify.inject({
         method: "POST",
         url: "/schedule/series/preview",

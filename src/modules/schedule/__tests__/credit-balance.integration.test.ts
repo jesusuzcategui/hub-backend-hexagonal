@@ -153,7 +153,7 @@ describe.skipIf(!DB_URL)("credit balance (throwaway DB)", () => {
       const student = await newStudent();
       const productId = await newProduct({});
       const later = await newBlock(student, productId, { totalCredits: 4, expiresAt: new Date(Date.now() + 30 * DAY) });
-      const sooner = await newBlock(student, productId, { totalCredits: 2, expiresAt: new Date(Date.now() + 5 * DAY) });
+      const sooner = await newBlock(student, productId, { totalCredits: 2, expiresAt: new Date(Date.now() + 15 * DAY) });
 
       await createStudentBooking(fastify, { studentId: student, slotId: await newSlot() });
       await createStudentBooking(fastify, { studentId: student, slotId: await newSlot() });
@@ -222,7 +222,7 @@ describe.skipIf(!DB_URL)("credit balance (throwaway DB)", () => {
     it("cancel returns the credit to the block it came from and keeps its expiry", async () => {
       const student = await newStudent();
       const productId = await newProduct({});
-      const expiresAt = new Date(Date.now() + 5 * DAY);
+      const expiresAt = new Date(Date.now() + 15 * DAY);
       const sooner = await newBlock(student, productId, { totalCredits: 2, expiresAt });
       const later = await newBlock(student, productId, { totalCredits: 4, expiresAt: new Date(Date.now() + 30 * DAY) });
 
@@ -240,7 +240,7 @@ describe.skipIf(!DB_URL)("credit balance (throwaway DB)", () => {
     it("an admin cancel also refunds the original block, even if it expired in the meantime (not usable afterwards)", async () => {
       const student = await newStudent();
       const productId = await newProduct({});
-      const id = await newBlock(student, productId, { totalCredits: 2, expiresAt: new Date(Date.now() + 5 * DAY) });
+      const id = await newBlock(student, productId, { totalCredits: 2, expiresAt: new Date(Date.now() + 15 * DAY) });
       const { bookingId } = await createStudentBooking(fastify, { studentId: student, slotId: await newSlot() });
 
       const expired = new Date(Date.now() - DAY);
@@ -254,16 +254,19 @@ describe.skipIf(!DB_URL)("credit balance (throwaway DB)", () => {
       await expect(createStudentBooking(fastify, { studentId: student, slotId: await newSlot() })).rejects.toMatchObject({ code: "CREDITS_EXPIRED" });
     });
 
-    it("a class booked while valid is honored: it can be rescheduled after its block expires", async () => {
+    it("a credit that expired in the meantime cannot carry a booking to a later date; the original booking stays", async () => {
       const student = await newStudent();
       const productId = await newProduct({});
-      const id = await newBlock(student, productId, { totalCredits: 2, expiresAt: new Date(Date.now() + 5 * DAY) });
+      const id = await newBlock(student, productId, { totalCredits: 2, expiresAt: new Date(Date.now() + 15 * DAY) });
       const { bookingId } = await createStudentBooking(fastify, { studentId: student, slotId: await newSlot() });
       await db.update(classCredits).set({ expiresAt: new Date(Date.now() - DAY) }).where(eq(classCredits.id, id));
 
-      const res = await rescheduleStudentBooking(fastify, { bookingId, studentId: student, newSlotId: await newSlot(12) });
+      await expect(
+        rescheduleStudentBooking(fastify, { bookingId, studentId: student, newSlotId: await newSlot(12) }),
+      ).rejects.toMatchObject({ statusCode: 409, code: "CLASS_AFTER_CREDIT_EXPIRY" });
 
-      expect(res.bookingId).toBeTruthy();
+      const [row] = await db.select().from(bookings).where(eq(bookings.id, bookingId));
+      expect(row.status).toBe("confirmed");
       expect((await block(id)).usedCredits).toBe(1);
     });
   });
@@ -318,7 +321,7 @@ describe.skipIf(!DB_URL)("credit balance (throwaway DB)", () => {
     it("POST /schedule/book works without creditId", async () => {
       const student = await newStudent();
       const productId = await newProduct({});
-      await newBlock(student, productId, { expiresAt: new Date(Date.now() + 5 * DAY) });
+      await newBlock(student, productId, { expiresAt: new Date(Date.now() + 15 * DAY) });
       const res = await fastify.inject({
         method: "POST",
         url: "/schedule/book",
@@ -345,7 +348,7 @@ describe.skipIf(!DB_URL)("credit balance (throwaway DB)", () => {
     it("POST /admin/students/:id/book works without creditId", async () => {
       const student = await newStudent();
       const productId = await newProduct({});
-      await newBlock(student, productId, { expiresAt: new Date(Date.now() + 5 * DAY) });
+      await newBlock(student, productId, { expiresAt: new Date(Date.now() + 15 * DAY) });
       const res = await fastify.inject({
         method: "POST",
         url: `/admin/students/${student}/book`,

@@ -12,7 +12,7 @@ import { escapeHtml } from "../payments/payments.service.js";
 import { renderEmailHtml, BRAND_COLOR } from "../../lib/email-template.js";
 import { AppError } from "../../lib/errors.js";
 import { buildBookingConfirmedEmail } from "./student-emails.js";
-import { isUsableBlock, pickCreditBlock, summarizeBalance, type BalanceSummary } from "./credit-balance.js";
+import { coversClassDate, isUsableBlock, pickCreditBlockForDate, summarizeBalance, type BalanceSummary } from "./credit-balance.js";
 import { hourChunks, pad2 } from "./slot-time.js";
 import "../../plugins/caldav.js";
 
@@ -349,6 +349,19 @@ export async function insertBookingInTx(
   return { bookingId, meetLink };
 }
 
+/**
+ * 409 CLASS_AFTER_CREDIT_EXPIRY. `creditExpiresAt` when a specific credit was named (explicit
+ * creditId, reschedule); `latestCreditExpiry` when the student has spendable credits but none of
+ * them reaches the class date.
+ */
+export function classAfterCreditExpiry(d: { creditExpiresAt: Date; classStartsAt: Date } | { latestCreditExpiry: Date; classStartsAt: Date }): AppError {
+  const details =
+    "creditExpiresAt" in d
+      ? { creditExpiresAt: d.creditExpiresAt.toISOString(), classStartsAt: d.classStartsAt.toISOString() }
+      : { latestCreditExpiry: d.latestCreditExpiry.toISOString(), classStartsAt: d.classStartsAt.toISOString() };
+  return new AppError(409, "CLASS_AFTER_CREDIT_EXPIRY", "That class falls after your credits expire. Pick a date on or before the expiry.", details);
+}
+
 function conflictToError(conflict: BookingConflict): AppError {
   if (conflict === "blocked") return new AppError(409, "SLOT_BLOCKED", "Slot is blocked");
   if (conflict === "slot_taken") return new AppError(409, "SLOT_TAKEN", "Slot already booked");
@@ -470,12 +483,16 @@ export async function createStudentBooking(
       if (!explicit) throw new AppError(404, "CREDIT_NOT_FOUND", "Credit not found");
       // consumeCredit=false: this credit was already consumed by the booking
       // being replaced (reschedule) — don't re-check remaining balance or
-      // expiry (a class booked while valid is honored) and don't increment
-      // again, that would double-charge a single credit.
+      // "usable right now" (a class booked while valid is honored) and don't
+      // increment again, that would double-charge a single credit.
       if (consumeCredit) {
         if (explicit.usedCredits >= explicit.totalCredits) throw new AppError(409, "NO_CREDITS", "No credits remaining");
         if (!isUsableBlock(explicit, now)) throw new AppError(409, "CREDIT_EXPIRED", "This credit has expired");
       }
+      // The class DATE must be on or before the credit's expiry day (Bogota, inclusive). This applies
+      // to every path that names a credit, reschedules included: a moved class still lives on the
+      // credit that paid for it.
+      if (!coversClassDate(explicit, startsAt)) throw classAfterCreditExpiry({ creditExpiresAt: explicit.expiresAt!, classStartsAt: startsAt });
       credit = explicit;
     } else {
       if (!consumeCredit) throw new AppError(400, "MISSING_FIELDS", "creditId is required when not consuming a credit");
@@ -486,13 +503,17 @@ export async function createStudentBooking(
         .where(eq(classCredits.userId, studentId))
         .orderBy(asc(classCredits.createdAt))
         .for("update");
-      const picked = pickCreditBlock(blocksOfStudent, now);
-      if (!picked) {
+      // Earliest-expiring usable block with credit whose coverage includes the class date.
+      const picked = pickCreditBlockForDate(blocksOfStudent, now, startsAt);
+      if (!picked.ok && picked.reason === "after_credit_expiry") {
+        throw classAfterCreditExpiry({ latestCreditExpiry: picked.latestCreditExpiry, classStartsAt: startsAt });
+      }
+      if (!picked.ok) {
         const hasExpiredLeftovers = blocksOfStudent.some((b) => b.usedCredits < b.totalCredits);
         if (hasExpiredLeftovers) throw new AppError(409, "CREDITS_EXPIRED", "Your credits have expired");
         throw new AppError(409, "NO_CREDITS", "No credits remaining");
       }
-      credit = picked;
+      credit = picked.block;
     }
     verifiedProductId = credit.productId;
 

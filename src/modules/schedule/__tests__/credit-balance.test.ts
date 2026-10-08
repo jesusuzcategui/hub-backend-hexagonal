@@ -2,7 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_CREDIT_VALIDITY_DAYS,
   computeCreditExpiry,
+  bogotaDateOf,
+  coversClassDate,
+  latestUsableExpiry,
   pickCreditBlock,
+  pickCreditBlockForDate,
   resolveGrantExpiry,
   summarizeBalance,
 } from "../credit-balance";
@@ -152,5 +156,75 @@ describe("resolveGrantExpiry", () => {
   it("an explicit expiry (manual admin override) wins over the product validity", () => {
     const explicit = new Date("2027-01-01T00:00:00Z");
     expect(resolveGrantExpiry(grant, { validityDays: 90 }, explicit)).toEqual(explicit);
+  });
+});
+
+describe("bogotaDateOf / coversClassDate (expiry day is inclusive, Bogota calendar)", () => {
+  it("maps an instant to its Bogota calendar date", () => {
+    expect(bogotaDateOf(new Date("2026-12-07T04:59:59Z"))).toBe("2026-12-06"); // 23:59:59 Dec 6 in Bogota
+    expect(bogotaDateOf(new Date("2026-12-07T05:00:00Z"))).toBe("2026-12-07");
+  });
+
+  const exp = new Date("2026-12-06T14:00:00Z"); // 09:00 Dec 6 Bogota
+
+  it("covers any class on the expiry day, even after the expiry instant", () => {
+    const b = block({ id: "a", expiresAt: exp });
+    expect(coversClassDate(b, new Date("2026-12-06T13:00:00Z"))).toBe(true); // 08:00 before expiry
+    expect(coversClassDate(b, new Date("2026-12-07T02:00:00Z"))).toBe(true); // 21:00 Dec 6, after the instant
+  });
+
+  it("does not cover the day after the expiry day", () => {
+    const b = block({ id: "a", expiresAt: exp });
+    expect(coversClassDate(b, new Date("2026-12-07T05:00:00Z"))).toBe(false); // 00:00 Dec 7 Bogota
+  });
+
+  it("a never-expiring block covers every date", () => {
+    expect(coversClassDate(block({ id: "n" }), new Date("2099-01-01T00:00:00Z"))).toBe(true);
+  });
+});
+
+describe("pickCreditBlockForDate", () => {
+  const early = block({ id: "early", expiresAt: new Date("2026-10-20T15:00:00Z"), createdAt: new Date("2026-09-01T00:00:00Z") });
+  const late = block({ id: "late", expiresAt: new Date("2026-12-20T15:00:00Z"), createdAt: new Date("2026-08-01T00:00:00Z") });
+  const never = block({ id: "never", expiresAt: null });
+
+  it("picks the earliest-expiring block whose coverage includes the date", () => {
+    const r = pickCreditBlockForDate([late, early], now, new Date("2026-10-15T15:00:00Z"));
+    expect(r).toEqual({ ok: true, block: early });
+  });
+
+  it("falls through to a later block when the earlier one expires before the class", () => {
+    const r = pickCreditBlockForDate([late, early], now, new Date("2026-11-15T15:00:00Z"));
+    expect(r).toEqual({ ok: true, block: late });
+  });
+
+  it("reports after_credit_expiry with the latest expiry when usable blocks exist but none covers", () => {
+    const r = pickCreditBlockForDate([late, early], now, new Date("2027-01-15T15:00:00Z"));
+    expect(r).toEqual({ ok: false, reason: "after_credit_expiry", latestCreditExpiry: late.expiresAt });
+  });
+
+  it("a never-expiring block always covers (and is chosen last)", () => {
+    expect(pickCreditBlockForDate([never, early], now, new Date("2026-10-15T15:00:00Z"))).toEqual({ ok: true, block: early });
+    expect(pickCreditBlockForDate([never, early], now, new Date("2030-01-01T00:00:00Z"))).toEqual({ ok: true, block: never });
+  });
+
+  it("reports no_usable when nothing is usable right now (expired or exhausted)", () => {
+    const expired = block({ id: "x", expiresAt: new Date("2026-10-01T00:00:00Z") });
+    const full = block({ id: "f", totalCredits: 2, usedCredits: 2 });
+    expect(pickCreditBlockForDate([expired, full], now, new Date("2026-10-15T15:00:00Z"))).toEqual({ ok: false, reason: "no_usable" });
+  });
+});
+
+describe("latestUsableExpiry", () => {
+  it("is the latest expiry among usable blocks with credit left", () => {
+    const a = block({ id: "a", expiresAt: new Date("2026-10-20T00:00:00Z") });
+    const b = block({ id: "b", expiresAt: new Date("2026-12-20T00:00:00Z") });
+    const expired = block({ id: "e", expiresAt: new Date("2026-10-01T00:00:00Z") });
+    expect(latestUsableExpiry([a, b, expired], now)).toEqual(b.expiresAt);
+  });
+
+  it("is null when any usable block never expires (no limit) or nothing is usable", () => {
+    expect(latestUsableExpiry([block({ id: "a", expiresAt: new Date("2026-10-20T00:00:00Z") }), block({ id: "n" })], now)).toBeNull();
+    expect(latestUsableExpiry([], now)).toBeNull();
   });
 });

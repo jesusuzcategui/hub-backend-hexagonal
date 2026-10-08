@@ -6,7 +6,7 @@ import { products } from "../../db/schema/ecommerce.js";
 import { blockedSlots, bookingSeries, bookings, classCredits, weeklySlots } from "../../db/schema/scheduling.js";
 import { AppError } from "../../lib/errors.js";
 import { normalizeLocale } from "../../lib/locale.js";
-import { summarizeBalance } from "./credit-balance.js";
+import { latestUsableExpiry, summarizeBalance } from "./credit-balance.js";
 import { DEFAULT_CAMPUS_URL } from "./reminders.service.js";
 import {
   buildIcal,
@@ -16,7 +16,7 @@ import {
   type DbHandle,
 } from "./schedule.service.js";
 import {
-  allocateCredits,
+  applyCreditCoverage,
   classifyOccurrences,
   generateOccurrences,
   seriesFingerprint,
@@ -84,6 +84,11 @@ async function classify(db: DbHandle, studentId: string, occurrences: ReturnType
   return classifyOccurrences(occurrences, { weeklySlots: slots, taken, blocked, studentBookings: mine, now });
 }
 
+/** All credit blocks of the student (any state), as rows the credit rules can work on. */
+async function loadBlocks(db: DbHandle, studentId: string) {
+  return db.select().from(classCredits).where(eq(classCredits.userId, studentId)).orderBy(asc(classCredits.createdAt));
+}
+
 async function studentBalance(db: DbHandle, studentId: string, now: Date): Promise<number> {
   const rows = await db
     .select({
@@ -109,7 +114,9 @@ export async function previewSeries(fastify: FastifyInstance, params: { studentI
   const rule = validateSeriesRule(params.rule);
   await loadStudent(fastify.drizzle, params.studentId);
   const occurrences = generateOccurrences(rule, now);
-  const classified = await classify(fastify.drizzle, params.studentId, occurrences, now);
+  const blocks = await loadBlocks(fastify.drizzle, params.studentId);
+  const { occurrences: classified } = applyCreditCoverage(await classify(fastify.drizzle, params.studentId, occurrences, now), blocks, now);
+  // `required` counts only what can actually be booked (occurrences past the credit expiry are not).
   const required = classified.filter((o) => o.status === "ok").length;
   const balance = await studentBalance(fastify.drizzle, params.studentId, now);
   return {
@@ -118,6 +125,8 @@ export async function previewSeries(fastify: FastifyInstance, params: { studentI
     required,
     balance,
     sufficientCredits: required <= balance,
+    /** Latest class date the student's usable credits reach (ISO); null when unlimited or no credits. */
+    latestCreditExpiry: latestUsableExpiry(blocks, now)?.toISOString() ?? null,
   };
 }
 
@@ -128,8 +137,10 @@ export async function previewSeries(fastify: FastifyInstance, params: { studentI
 /**
  * Creates a series in ONE transaction:
  *   lock the student's credit blocks -> lock every instant (ascending) -> classify with fresh data
+ *   and match every bookable occurrence to the block that pays for it (earliest-expiring block
+ *   with credit whose expiry day covers the occurrence; the rest become `after_credit_expiry`)
  *   -> conflicts? (409 unless skipConflicts) -> enough credits? (409) -> insert the series row and
- *   one booking per ok occurrence, each charged to its own block (allocateCredits).
+ *   one booking per ok occurrence, each charged to its own block (applyCreditCoverage).
  * CalDAV events and the single summary email happen after commit and are best-effort.
  *
  * Order of the two 409s: conflicts are reported before credits (with skipConflicts=false the
@@ -203,7 +214,8 @@ export async function createSeriesIdempotent(
       await lockBookingInstant(tx, occ.startsAt);
     }
 
-    const classified = await classify(tx, studentId, occurrences, now);
+    const covered = applyCreditCoverage(await classify(tx, studentId, occurrences, now), blocks, now);
+    const classified = covered.occurrences;
     const conflicts = classified.filter((o) => o.status !== "ok");
     if (conflicts.length > 0 && (!skipConflicts || conflicts.length === classified.length)) {
       throw new AppError(409, "SERIES_CONFLICTS", "Some occurrences cannot be booked", { occurrences: classified.map(toReport) });
@@ -214,8 +226,9 @@ export async function createSeriesIdempotent(
       blocks.map((b) => ({ ...b, creditId: b.id, productName: "" })),
       now,
     ).balance;
-    const allocation = allocateCredits(blocks, okOccurrences.length, now);
-    if (!allocation.complete) {
+    // Occurrences past every covering credit are already conflicts above; what is left unfunded here
+    // is a plain shortage of credits.
+    if (covered.unfunded > 0) {
       throw new AppError(409, "INSUFFICIENT_CREDITS", "Not enough credits for this series", { required: okOccurrences.length, balance });
     }
     const blockById = new Map(blocks.map((b) => [b.id, b]));
@@ -250,7 +263,7 @@ export async function createSeriesIdempotent(
         skipped.push({ startsAt: occ.startsAt.toISOString(), status: conflict });
         continue;
       }
-      const block = blockById.get(allocation.creditIds[created.length])!;
+      const block = blockById.get(covered.creditByStart.get(occ.startsAt.getTime())!)!;
       const { bookingId, meetLink } = await insertBookingInTx(tx, {
         studentId,
         target,
