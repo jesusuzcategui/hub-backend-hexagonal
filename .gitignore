@@ -9,3 +9,4 @@ package-lock.json
 *.notes.md
 .private/
 cookies.txt
+.local-stack/

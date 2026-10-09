@@ -18,7 +18,9 @@
     "db:seed": "tsx src/db/seed.ts",
     "db:seed-mentoring": "tsx src/db/seed-mentoring.ts",
     "db:studio": "drizzle-kit studio",
-    "dev:tunnel": "ngrok http --url=trichotomous-chrystal-dilly.ngrok-free.dev 3003"
+    "dev:tunnel": "ngrok http --url=trichotomous-chrystal-dilly.ngrok-free.dev 3003",
+    "stack:up": "bash scripts/local-up.sh",
+    "stack:down": "bash scripts/local-down.sh"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
