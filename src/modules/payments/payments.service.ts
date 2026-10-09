@@ -46,6 +46,19 @@ export function escapeHtml(value: string): string {
 }
 const idGenerator = new RandomIdGenerator();
 
+// Settlement (core transition + credit grant) is check-then-act across several queries, so two
+// concurrent deliveries of the same event — provider retries, a replayed signed payload, an admin
+// double-click — both pass the core's hasProcessed check and both grant credits. Running settlements
+// one at a time makes the second one see the first's recorded event and come back as "duplicate".
+// ponytail: in-process queue; the hub runs as a single replica. Move to pg_advisory_xact_lock keyed
+// by order if it is ever scaled out. The unique index on class_credits.order_id backstops the money.
+let settlementQueue: Promise<unknown> = Promise.resolve();
+function serializeSettlement<T>(fn: () => Promise<T>): Promise<T> {
+  const run = settlementQueue.then(fn, fn);
+  settlementQueue = run.catch(() => undefined);
+  return run;
+}
+
 function buildRepos(fastify: FastifyInstance, insertContext?: { userId: string; cartId?: string | null }) {
   const orderRepository = new DrizzleOrderRepository(fastify.drizzle, insertContext);
   const paymentAttemptRepository = new DrizzlePaymentAttemptRepository(fastify.drizzle);
@@ -651,6 +664,8 @@ async function applySettlementSideEffects(
       await fetch(`${env.umami.url}/api/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // Runs inside the settlement queue: a hung analytics call must not stall every settlement.
+        signal: AbortSignal.timeout(5000),
         body: JSON.stringify({
           type: "event",
           payload: {
@@ -666,13 +681,39 @@ async function applySettlementSideEffects(
   }
 
   // 5. Coupon redemption — only now, on confirmed settlement (never at checkout time,
-  // to avoid burning a coupon on an abandoned/failed attempt).
+  // to avoid burning a coupon on an abandoned/failed attempt). The limit is only checked at
+  // checkout, so several discounted orders can be open at once: the increment is guarded so
+  // the count never passes max_redemptions, and an overflow (this buyer already paid the
+  // discounted price) is reported to admins instead of being counted silently.
+  // ponytail: reservation at checkout with an expiry would prevent the overflow instead of
+  // reporting it; add it if limited coupons start being abused.
   if (metadata?.couponId) {
     try {
-      await fastify.drizzle
+      const redeemed = await fastify.drizzle
         .update(coupons)
         .set({ redeemedCount: sql`${coupons.redeemedCount} + 1`, updatedAt: new Date() })
-        .where(eq(coupons.id, metadata.couponId));
+        .where(
+          and(
+            eq(coupons.id, metadata.couponId),
+            sql`(${coupons.maxRedemptions} IS NULL OR ${coupons.redeemedCount} < ${coupons.maxRedemptions})`,
+          ),
+        )
+        .returning({ id: coupons.id });
+      if (redeemed.length === 0) {
+        fastify.log.warn({ orderId: order.id, couponId: metadata.couponId }, "Coupon redeemed past its limit at settlement");
+        await notifyAdminsOfReviewNeeded(fastify, {
+          orderId: order.id,
+          buyerName: account.displayName,
+          buyerEmail: account.email,
+          amountMinor: order.amountMinor,
+          currency: order.currency,
+          reason: `El cupón ${metadata.couponId} ya alcanzó su límite de usos; esta orden se pagó con el descuento aplicado.`,
+          heading: {
+            title: "Cupón usado más veces de las permitidas",
+            intro: "Una orden pagada aplicó un cupón que ya había alcanzado su límite. La orden está pagada y entregada; revisá si corresponde ajustar el cupón o contactar al comprador.",
+          },
+        });
+      }
     } catch (err) {
       fastify.log.error({ err, orderId: order.id }, "Failed to increment coupon redemption on settlement");
     }
@@ -688,7 +729,16 @@ async function applySettlementSideEffects(
  */
 export async function notifyAdminsOfReviewNeeded(
   fastify: FastifyInstance,
-  info: { orderId: string; buyerName: string; buyerEmail: string; amountMinor: number; currency: string; reason: string },
+  info: {
+    orderId: string;
+    buyerName: string;
+    buyerEmail: string;
+    amountMinor: number;
+    currency: string;
+    reason: string;
+    /** Defaults to the needs_review wording; pass a title + intro when the order is NOT in review. */
+    heading?: { title: string; intro: string };
+  },
 ): Promise<void> {
   try {
     let recipients: string[];
@@ -711,14 +761,16 @@ export async function notifyAdminsOfReviewNeeded(
     const origin = (env.campus.origin ?? "https://campus.jesusuzcategui.com").replace(/\/+$/, "");
     const ordersUrl = escapeHtml(`${origin}/admin/orders`);
 
+    const title = info.heading?.title ?? "Orden pendiente de revisión";
+    const intro = info.heading?.intro ?? "Una orden pagada quedó marcada como <strong>needs_review</strong> y necesita que la revises manualmente.";
     await fastify.mailer.sendMail({
       from: `"${env.smtp.fromName}" <${env.smtp.from}>`,
       to: recipients.join(","),
-      subject: `⚠️ Orden pendiente de revisión — ${safeName}`,
+      subject: `⚠️ ${title} — ${safeName}`,
       html: renderEmailHtml({
-        title: "Orden pendiente de revisión",
+        title,
         bodyHtml: `
-          <p>Una orden pagada quedó marcada como <strong>needs_review</strong> y necesita que la revises manualmente.</p>
+          <p>${intro}</p>
           <p><strong>Comprador:</strong> ${safeName} (${safeEmail})</p>
           <p><strong>Monto:</strong> ${amount.toLocaleString("es-CO")} ${currency}</p>
           <p><strong>Motivo:</strong> ${safeReason}</p>
@@ -810,15 +862,17 @@ export async function handleEpaycoWebhook(
     }
   }
 
-  const result = await settlePayment(
-    { rawBody, headers, provider },
-    { orderRepository, paymentAttemptRepository, paymentEventStore, clock, idGenerator, mapProviderStatus: epaycoStatusMapper },
-  );
-  await handleSettlementResult(fastify, result, {
-    forceNeedsReview: contrasteUnavailable,
-    contrasteRef: contrasteUnavailable ? parsed.providerEventId : undefined,
+  return serializeSettlement(async () => {
+    const result = await settlePayment(
+      { rawBody, headers, provider },
+      { orderRepository, paymentAttemptRepository, paymentEventStore, clock, idGenerator, mapProviderStatus: epaycoStatusMapper },
+    );
+    await handleSettlementResult(fastify, result, {
+      forceNeedsReview: contrasteUnavailable,
+      contrasteRef: contrasteUnavailable ? parsed.providerEventId : undefined,
+    });
+    return result;
   });
-  return result;
 }
 
 export async function handlePaypalWebhook(
@@ -829,12 +883,14 @@ export async function handlePaypalWebhook(
   const { orderRepository, paymentAttemptRepository, paymentEventStore } = buildRepos(fastify);
   const provider = new PaypalProvider(paymentAttemptRepository);
 
-  const result = await settlePayment(
-    { rawBody, headers, provider },
-    { orderRepository, paymentAttemptRepository, paymentEventStore, clock, idGenerator, mapProviderStatus: paypalStatusMapper },
-  );
-  await handleSettlementResult(fastify, result);
-  return result;
+  return serializeSettlement(async () => {
+    const result = await settlePayment(
+      { rawBody, headers, provider },
+      { orderRepository, paymentAttemptRepository, paymentEventStore, clock, idGenerator, mapProviderStatus: paypalStatusMapper },
+    );
+    await handleSettlementResult(fastify, result);
+    return result;
+  });
 }
 
 // --- Payment methods (public read) --------------------------------------------------------
@@ -1103,18 +1159,22 @@ export async function validateManualTransfer(
   if (!attempt) throw new AppError(404, "ATTEMPT_NOT_FOUND", "No payment attempt found for this order");
 
   const provider = new ManualTransferProvider();
-  const result = await settleManualPayment(
-    {
-      provider,
-      attemptId: attempt.id,
-      confirmationId: `admin-review:${Date.now()}`,
-      status: decision === "approve" ? "paid" : "failed",
-      amountMinor: order.amountMinor,
-      currency: order.currency,
-    },
-    { orderRepository, paymentAttemptRepository, paymentEventStore, clock, idGenerator, mapProviderStatus: manualTransferStatusMapper },
-  );
+  return serializeSettlement(async () => {
+    const result = await settleManualPayment(
+      {
+        provider,
+        attemptId: attempt.id,
+        // Deterministic per attempt + decision so a repeated approve is a core "duplicate",
+        // not a fresh event (Date.now() made every click unique).
+        confirmationId: `admin-review:${attempt.id}:${decision}`,
+        status: decision === "approve" ? "paid" : "failed",
+        amountMinor: order.amountMinor,
+        currency: order.currency,
+      },
+      { orderRepository, paymentAttemptRepository, paymentEventStore, clock, idGenerator, mapProviderStatus: manualTransferStatusMapper },
+    );
 
-  await handleSettlementResult(fastify, result);
-  return result;
+    await handleSettlementResult(fastify, result);
+    return result;
+  });
 }

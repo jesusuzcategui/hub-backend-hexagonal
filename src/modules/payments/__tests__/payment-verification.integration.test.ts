@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { createDrizzle } from "../../../db";
 import { accounts } from "../../../db/schema/users";
-import { products } from "../../../db/schema/ecommerce";
+import { coupons, products } from "../../../db/schema/ecommerce";
 import { orders, orderReviewEvents, paymentAttempts, paymentEvents } from "../../../db/schema/payments";
 import { classCredits } from "../../../db/schema/scheduling";
 import { contentAccess } from "../../../db/schema/ecommerce";
@@ -42,10 +42,11 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
   const accountIds: string[] = [];
   const orderIds: string[] = [];
   const productIds: string[] = [];
+  const couponIds: string[] = [];
   let seq = 0;
 
   /** What the stubbed ePayco "contraste" endpoint answers. */
-  type Contraste = "unavailable" | { invoice: string; amount: string; currency: string };
+  type Contraste = "unavailable" | { invoice: string; amount: string; currency: string; codResponse?: string };
   let contraste: Contraste = "unavailable";
 
   function stubEpayco() {
@@ -59,7 +60,12 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
       return new Response(
         JSON.stringify({
           status: true,
-          data: { x_id_invoice: contraste.invoice, x_amount: contraste.amount, x_currency_code: contraste.currency },
+          data: {
+            x_id_invoice: contraste.invoice,
+            x_amount: contraste.amount,
+            x_currency_code: contraste.currency,
+            x_cod_response: contraste.codResponse ?? "1",
+          },
         }),
         { status: 200 },
       );
@@ -78,7 +84,7 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
   }
 
   /** An open order with one pending ePayco attempt, ready to receive the confirmation webhook. */
-  async function newOpenOrder(opts: { productId?: string; userId?: string } = {}) {
+  async function newOpenOrder(opts: { productId?: string; userId?: string; couponId?: string } = {}) {
     const userId = opts.userId ?? (await newAccount()).id;
     const [o] = await db
       .insert(orders)
@@ -91,7 +97,7 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
         status: "open",
         fulfillmentStatus: "pending",
         userId,
-        metadata: { cartId: "00000000-0000-4000-8000-0000000000aa", productId: opts.productId ?? productId, creditsCount: 4, locale: "es", couponId: null, items: [] },
+        metadata: { cartId: "00000000-0000-4000-8000-0000000000aa", productId: opts.productId ?? productId, creditsCount: 4, locale: "es", couponId: opts.couponId ?? null, items: [] },
       })
       .returning({ id: orders.id });
     orderIds.push(o.id);
@@ -173,6 +179,7 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
       await db.delete(orders).where(inArray(orders.id, orderIds)); // cascades attempts + review events
     }
     await db.delete(products).where(inArray(products.id, productIds));
+    if (couponIds.length) await db.delete(coupons).where(inArray(coupons.id, couponIds));
     await db.delete(accounts).where(inArray(accounts.id, accountIds));
     await fastify.close();
     await pool.end();
@@ -244,6 +251,24 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
       expect(mailsToAdmin()).toHaveLength(0);
     });
 
+    // Concurrent deliveries of ONE confirmation (provider retries, or a replayed signed
+    // payload) must settle once: one credit block, one recorded event, one buyer email.
+    it("concurrent duplicate webhooks grant credits exactly once", async () => {
+      const { orderId, userId } = await newOpenOrder();
+      contraste = { invoice: orderId, amount: String(AMOUNT), currency: "COP" };
+      // Warm the pool so the deliveries really overlap (see booking-errors.integration).
+      await Promise.all(Array.from({ length: 10 }, () => pool.query("select pg_sleep(0.05)")));
+
+      const results = await Promise.all(Array.from({ length: 10 }, () => deliverWebhook(orderId, "ref-dup")));
+
+      expect(results.filter((r) => r.outcome === "applied")).toHaveLength(1);
+      expect(results.filter((r) => r.outcome === "duplicate")).toHaveLength(9);
+      expect(await db.select().from(classCredits).where(eq(classCredits.orderId, orderId))).toHaveLength(1);
+      expect(await db.select().from(paymentEvents).where(eq(paymentEvents.orderId, orderId))).toHaveLength(1);
+      const buyer = (await db.select().from(accounts).where(eq(accounts.id, userId)))[0];
+      expect(mailsToBuyer(buyer.email)).toHaveLength(1);
+    });
+
     it("a genuine contraste mismatch still rejects with 409 and settles nothing (behavior unchanged)", async () => {
       const { orderId } = await newOpenOrder();
       contraste = { invoice: orderId, amount: "1", currency: "COP" };
@@ -252,6 +277,40 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
       const o = await orderRow(orderId);
       expect(o.status).toBe("open");
       expect(o.reviewReason).toBeNull();
+    });
+
+    // max_redemptions is only checked at checkout, so several discounted orders can exist before the
+    // first one is paid. Settlement must not count past the limit, and must tell an admin when it happens.
+    it("a coupon is never redeemed past max_redemptions and the overflow alerts admins", async () => {
+      const [c] = await db
+        .insert(coupons)
+        .values({ code: `${TAG}-ONE`, type: "percent", value: 50, maxRedemptions: 1 })
+        .returning({ id: coupons.id });
+      couponIds.push(c.id);
+      const first = await newOpenOrder({ couponId: c.id });
+      const second = await newOpenOrder({ couponId: c.id });
+      contraste = { invoice: first.orderId, amount: String(AMOUNT), currency: "COP" };
+      await deliverWebhook(first.orderId, "ref-cp1");
+      contraste = { invoice: second.orderId, amount: String(AMOUNT), currency: "COP" };
+      await deliverWebhook(second.orderId, "ref-cp2");
+
+      const [row] = await db.select({ n: coupons.redeemedCount }).from(coupons).where(eq(coupons.id, c.id));
+      expect(row.n).toBe(1);
+      const alerts = mailsToAdmin();
+      expect(alerts).toHaveLength(1);
+      expect(String(alerts[0].html ?? alerts[0].text)).toContain(second.orderId);
+    });
+
+    // x_transaction_state is not covered by x_signature: a signed but declined/pending transaction
+    // can be replayed with the state flipped to "Aceptada". Only ePayco's own answer decides.
+    it("a webhook claiming 'Aceptada' for a transaction ePayco reports as rejected is refused", async () => {
+      const { orderId } = await newOpenOrder();
+      contraste = { invoice: orderId, amount: String(AMOUNT), currency: "COP", codResponse: "2" };
+
+      await expect(deliverWebhook(orderId, "ref-forged")).rejects.toMatchObject({ statusCode: 409, code: "CONTRASTE_MISMATCH" });
+      const o = await orderRow(orderId);
+      expect(o.status).toBe("open");
+      expect(await db.select().from(classCredits).where(eq(classCredits.orderId, orderId))).toHaveLength(0);
     });
 
     it("an invalid signature still rejects with 401 before anything else", async () => {
@@ -265,11 +324,11 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
   // ---- automatic re-verification pass ------------------------------------------------------------------------
 
   type FakeProvider = { validateTransactionByReference: ReturnType<typeof vi.fn> };
-  const fakeProvider = (answer: (ref: string) => Promise<{ amountMinor: number; currency: string; invoice: string }>): FakeProvider => ({
+  const fakeProvider = (answer: (ref: string) => Promise<{ amountMinor: number; currency: string; invoice: string; approved: boolean }>): FakeProvider => ({
     validateTransactionByReference: vi.fn(answer),
   });
   const confirms = (orderId: string) =>
-    fakeProvider(async () => ({ invoice: orderId, amountMinor: AMOUNT, currency: "COP" }));
+    fakeProvider(async () => ({ invoice: orderId, amountMinor: AMOUNT, currency: "COP", approved: true }));
   const unavailable = () =>
     fakeProvider(async () => {
       throw new EpaycoContrasteUnavailableError("test");
@@ -383,9 +442,9 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
     });
 
     it.each([
-      ["different amount", (id: string) => ({ invoice: id, amountMinor: AMOUNT - 1, currency: "COP" })],
-      ["different currency", (id: string) => ({ invoice: id, amountMinor: AMOUNT, currency: "USD" })],
-      ["different invoice", (_id: string) => ({ invoice: "someone-elses-order", amountMinor: AMOUNT, currency: "COP" })],
+      ["different amount", (id: string) => ({ invoice: id, amountMinor: AMOUNT - 1, currency: "COP", approved: true })],
+      ["different currency", (id: string) => ({ invoice: id, amountMinor: AMOUNT, currency: "USD", approved: true })],
+      ["different invoice", (_id: string) => ({ invoice: "someone-elses-order", amountMinor: AMOUNT, currency: "COP", approved: true })],
     ])("a genuine mismatch (%s) is never auto-cleared and alerts admins immediately, once", async (_name, data) => {
       const { flaggedAt, orderId } = await newFlaggedOrder();
       const p = fakeProvider(async () => data(orderId));
@@ -416,7 +475,7 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
       const b = await newFlaggedOrder();
       const p = fakeProvider(async (ref) => {
         if (ref === a.ref) throw new Error("boom: socket hang up");
-        return { invoice: b.orderId, amountMinor: AMOUNT, currency: "COP" };
+        return { invoice: b.orderId, amountMinor: AMOUNT, currency: "COP", approved: true };
       });
       const now = after(new Date(Math.max(a.flaggedAt.getTime(), b.flaggedAt.getTime())), 2);
 
@@ -432,7 +491,7 @@ describe.skipIf(!DB_URL)("payment auto-verification (throwaway DB)", () => {
       const { flaggedAt, orderId } = await newFlaggedOrder();
       const slow = fakeProvider(async () => {
         await new Promise((r) => setTimeout(r, 80));
-        return { invoice: orderId, amountMinor: AMOUNT, currency: "COP" };
+        return { invoice: orderId, amountMinor: AMOUNT, currency: "COP", approved: true };
       });
       const now = after(flaggedAt, 2);
 

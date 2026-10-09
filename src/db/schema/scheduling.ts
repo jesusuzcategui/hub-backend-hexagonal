@@ -84,7 +84,10 @@ export const classCredits = schedulingSchema.table(
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("idx_class_credits_user_id").on(table.userId)],
+  (table) => [
+    index("idx_class_credits_user_id").on(table.userId),
+    uniqueIndex("uq_class_credits_order_id").on(table.orderId).where(sql`${table.orderId} IS NOT NULL`),
+  ],
 );
 
 // A recurring-class series. Occurrences are ordinary bookings (series_id set); all credits are

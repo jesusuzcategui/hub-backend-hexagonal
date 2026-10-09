@@ -113,11 +113,18 @@ describe("parseVerifySchedule (env)", () => {
 });
 
 const order = { id: "ord-1", amountMinor: 150_000, currency: "COP" };
-const good = { invoice: "ord-1", amountMinor: 150_000, currency: "COP" };
+const good = { invoice: "ord-1", amountMinor: 150_000, currency: "COP", approved: true };
 
 describe("contrasteMatchesOrder", () => {
   it("matches when invoice, amount and currency agree (currency case-insensitive on the order)", () => {
     expect(contrasteMatchesOrder(good, { ...order, currency: "cop" }, { isApproved: true })).toBe(true);
+  });
+
+  // The webhook's own state is not covered by its signature; only ePayco's server-to-server answer is.
+  it("refuses an 'approved' webhook when ePayco itself says the transaction is not (yet) approved", () => {
+    expect(contrasteMatchesOrder({ ...good, approved: false }, order, { isApproved: true })).toBe(false);
+    expect(contrasteMatchesOrder({ ...good, approved: null }, order, { isApproved: true })).toBe(false);
+    expect(contrasteMatchesOrder({ ...good, approved: false }, order, { isApproved: false })).toBe(true);
   });
 
   it("always requires the invoice", () => {
@@ -142,8 +149,13 @@ describe("decideAfterContraste", () => {
     ["different currency", { ...good, currency: "USD" }],
     ["empty invoice", { ...good, invoice: "" }],
     ["zero amount", { ...good, amountMinor: 0 }],
+    ["not approved at ePayco", { ...good, approved: false }],
   ])("reports a mismatch on %s", (_n, contraste) => {
     expect(decideAfterContraste({ kind: "data", contraste }, order)).toBe("mismatch");
+  });
+
+  it("treats a transaction ePayco still reports as pending as unavailable (retry), not a mismatch", () => {
+    expect(decideAfterContraste({ kind: "data", contraste: { ...good, approved: null } }, order)).toBe("unavailable");
   });
 
   it("reports unavailable when ePayco could not answer", () => {

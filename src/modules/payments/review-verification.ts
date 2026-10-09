@@ -89,6 +89,11 @@ export interface ContrasteData {
   invoice: string;
   amountMinor: number;
   currency: string;
+  /**
+   * ePayco's own verdict: true approved (x_cod_response 1), false rejected/failed, null still pending.
+   * The webhook's x_transaction_state is NOT signed, so it never decides.
+   */
+  approved: boolean | null;
 }
 
 export interface OrderForContraste {
@@ -98,9 +103,10 @@ export interface OrderForContraste {
 }
 
 /**
- * The single definition of "ePayco's own data matches the order". The invoice is always required; amount and
- * currency are asserted only for approved payments (a forged non-approved webhook moves no money, and being
- * strict there breaks legitimate decline notifications). A paid order is by definition approved.
+ * The single definition of "ePayco's own data matches the order". The invoice is always required; amount,
+ * currency and ePayco's own approval are asserted only when the webhook claims the payment was approved (a
+ * forged non-approved webhook moves no money, and being strict there breaks legitimate decline notifications).
+ * A paid order is by definition approved.
  */
 export function contrasteMatchesOrder(
   contraste: ContrasteData,
@@ -108,17 +114,25 @@ export function contrasteMatchesOrder(
   opts: { isApproved: boolean },
 ): boolean {
   const invoiceMatches = contraste.invoice === order.id;
-  const amountMatches = !opts.isApproved || contraste.amountMinor === order.amountMinor;
-  const currencyMatches = !opts.isApproved || contraste.currency === order.currency.toUpperCase();
-  return invoiceMatches && amountMatches && currencyMatches;
+  if (!opts.isApproved) return invoiceMatches;
+  return (
+    invoiceMatches &&
+    contraste.approved === true &&
+    contraste.amountMinor === order.amountMinor &&
+    contraste.currency === order.currency.toUpperCase()
+  );
 }
 
 export type ContrasteOutcome = { kind: "data"; contraste: ContrasteData } | { kind: "unavailable" };
 export type ReviewDecision = "clear" | "mismatch" | "unavailable";
 
-/** Decision for an already-paid order being re-verified: the order is paid, so amount/currency are required. */
+/**
+ * Decision for an already-paid order being re-verified: the order is paid, so amount/currency and ePayco's
+ * approval are required. A transaction ePayco still reports as pending is not a mismatch yet: retry later.
+ */
 export function decideAfterContraste(result: ContrasteOutcome, order: OrderForContraste): ReviewDecision {
   if (result.kind === "unavailable") return "unavailable";
+  if (result.contraste.approved === null) return "unavailable";
   return contrasteMatchesOrder(result.contraste, order, { isApproved: true }) ? "clear" : "mismatch";
 }
 

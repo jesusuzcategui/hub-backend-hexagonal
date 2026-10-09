@@ -1,5 +1,6 @@
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -96,7 +97,10 @@ export const coupons = ecommerceSchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("uq_coupons_code").on(table.code)],
+  (table) => [
+    uniqueIndex("uq_coupons_code").on(table.code),
+    check("coupons_redemption_limit_check", sql`${table.maxRedemptions} IS NULL OR ${table.redeemedCount} <= ${table.maxRedemptions}`),
+  ],
 );
 
 // One row per payment method ("epayco" | "paypal" | "manual_transfer"),

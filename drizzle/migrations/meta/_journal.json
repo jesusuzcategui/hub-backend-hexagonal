@@ -148,6 +148,20 @@
       "when": 1791676800000,
       "tag": "0020_booking_series_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791763200000,
+      "tag": "0021_class_credits_one_block_per_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791763260000,
+      "tag": "0022_coupons_redemption_limit_check",
+      "breakpoints": true
     }
   ]
 }

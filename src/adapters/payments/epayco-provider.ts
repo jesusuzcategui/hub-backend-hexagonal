@@ -215,7 +215,7 @@ export class EpaycoProvider implements WebhookPaymentProvider {
    */
   async validateTransactionByReference(
     xRefPayco: string,
-  ): Promise<{ amountMinor: number; currency: string; invoice: string }> {
+  ): Promise<{ amountMinor: number; currency: string; invoice: string; approved: boolean | null }> {
     // ePayco's own reference endpoint is known to be flaky — confirmed
     // against a REAL, valid transaction: it returned HTTP 200 with a
     // generic {"status":false,"message":"Error de datos o conexión."}
@@ -246,7 +246,13 @@ export class EpaycoProvider implements WebhookPaymentProvider {
         }
         const json = (await res.json()) as {
           status?: boolean;
-          data?: { x_amount?: string; x_currency_code?: string; x_id_invoice?: string };
+          data?: {
+            x_amount?: string;
+            x_currency_code?: string;
+            x_id_invoice?: string;
+            x_cod_response?: number | string;
+            x_transaction_state?: string;
+          };
         };
         if (json.status === false || !json.data) {
           throw new Error("ePayco: contraste endpoint returned a logical error, no transaction data");
@@ -254,10 +260,22 @@ export class EpaycoProvider implements WebhookPaymentProvider {
         const currency = (json.data.x_currency_code ?? "").toUpperCase();
         const amountMinor =
           json.data.x_amount && currency ? toAmountMinor(json.data.x_amount, currency) : undefined;
+        // x_cod_response: 1 approved, 2 rejected, 3 pending, 4 failed (github.com/epayco/resources samples).
+        // Pending is `null` (undecided, retry later), not `false` (rejected). The state string is only a
+        // fallback for a response that omits the code.
+        const cod = json.data.x_cod_response;
+        const state = json.data.x_transaction_state;
+        let approved: boolean | null;
+        if (cod == null || cod === "") {
+          approved = state === "Aceptada" ? true : state === "Pendiente" ? null : false;
+        } else {
+          approved = Number(cod) === 1 ? true : Number(cod) === 3 ? null : false;
+        }
         return {
           amountMinor: amountMinor ?? 0,
           currency,
           invoice: json.data.x_id_invoice ?? "",
+          approved,
         };
       } catch (err) {
         lastError = err;
