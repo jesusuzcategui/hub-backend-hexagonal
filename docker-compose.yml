@@ -67,6 +67,9 @@ services:
       CALDAV_SYNC_HORIZON_WEEKS: "${CALDAV_SYNC_HORIZON_WEEKS:-16}"
       CALDAV_ALL_DAY_BLOCKS: "${CALDAV_ALL_DAY_BLOCKS:-true}"
       CALDAV_SYNC_EXPAND: "${CALDAV_SYNC_EXPAND:-true}"
+      # In-process background jobs. Both default to ON when unset; set =false to disable (e.g. staging reminders).
+      REMINDERS_ENABLED: "${REMINDERS_ENABLED:-true}"
+      PAYMENT_AUTOVERIFY_ENABLED: "${PAYMENT_AUTOVERIFY_ENABLED:-true}"
       JITSI_BASE_URL: "${JITSI_BASE_URL:-https://talk.jesusuzcategui.com}"
       MENTORING_TEACHER_ID: "${MENTORING_TEACHER_ID:?MENTORING_TEACHER_ID is required}"
       PORTFOLIO_ORIGIN: "${PORTFOLIO_ORIGIN:-}"
