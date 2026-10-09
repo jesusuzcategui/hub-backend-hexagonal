@@ -243,18 +243,23 @@ export async function cancelBooking(
 ) {
   const db = fastify.drizzle;
 
-  const booking = await db.query.bookings.findFirst({
-    where: eq(bookings.id, bookingId),
-    columns: { id: true, status: true, availabilityId: true, creditId: true, gcalEventId: true, studentId: true, startsAt: true },
-  });
+  // Same shape as schedule.service.ts cancelStudentBooking: lock the row, condition the
+  // update on the status and refund only when this call is the one that cancelled it, so an
+  // admin cancel racing a student cancel (or a second admin click) refunds one credit, not two.
+  const booking = await db.transaction(async (tx) => {
+    const [booking] = await tx
+      .select({ id: bookings.id, status: bookings.status, availabilityId: bookings.availabilityId, creditId: bookings.creditId, gcalEventId: bookings.gcalEventId, studentId: bookings.studentId, startsAt: bookings.startsAt })
+      .from(bookings)
+      .where(eq(bookings.id, bookingId))
+      .limit(1)
+      .for("update");
 
-  if (!booking) throw new AppError(404, "BOOKING_NOT_FOUND", "Booking not found");
-  if (booking.status === "cancelled") {
-    throw new AppError(400, "ALREADY_CANCELLED", "Booking is already cancelled");
-  }
+    if (!booking) throw new AppError(404, "BOOKING_NOT_FOUND", "Booking not found");
+    if (booking.status === "cancelled") {
+      throw new AppError(400, "ALREADY_CANCELLED", "Booking is already cancelled");
+    }
 
-  await db.transaction(async (tx) => {
-    await tx
+    const cancelled = await tx
       .update(bookings)
       .set({
         status: "cancelled",
@@ -262,7 +267,11 @@ export async function cancelBooking(
         cancelReason: reason ?? null,
         updatedAt: new Date(),
       })
-      .where(eq(bookings.id, bookingId));
+      .where(and(eq(bookings.id, bookingId), ne(bookings.status, "cancelled")))
+      .returning({ id: bookings.id });
+    if (cancelled.length === 0) {
+      throw new AppError(400, "ALREADY_CANCELLED", "Booking is already cancelled");
+    }
 
     if (booking.availabilityId) {
       await tx
@@ -275,6 +284,8 @@ export async function cancelBooking(
       .update(classCredits)
       .set({ usedCredits: sql`GREATEST(${classCredits.usedCredits} - 1, 0)` })
       .where(eq(classCredits.id, booking.creditId));
+
+    return booking;
   });
 
   if (booking.gcalEventId) {

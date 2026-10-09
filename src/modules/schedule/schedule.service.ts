@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, gt, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import type { NodePgQueryResultHKT } from "drizzle-orm/node-postgres";
@@ -676,27 +676,36 @@ export async function cancelStudentBooking(
   bookingId: string,
   userId: string,
 ) {
-  const [booking] = await fastify.drizzle
-    .select()
-    .from(bookings)
-    .where(and(eq(bookings.id, bookingId), eq(bookings.studentId, userId)))
-    .limit(1);
+  // Read, check and update inside ONE transaction with the row locked: concurrent
+  // cancels (or a cancel racing a reschedule/series cancel) must not each pass a
+  // stale status check and refund the same credit again. The update is still
+  // conditioned on status and gates the refund on a row actually changing.
+  const booking = await fastify.drizzle.transaction(async (tx) => {
+    const [booking] = await tx
+      .select()
+      .from(bookings)
+      .where(and(eq(bookings.id, bookingId), eq(bookings.studentId, userId)))
+      .limit(1)
+      .for("update");
 
-  if (!booking) throw new AppError(404, "BOOKING_NOT_FOUND", "Booking not found");
-  if (booking.status === "cancelled" || booking.status === "completed") {
-    throw new AppError(409, "BOOKING_NOT_CANCELLABLE", "Booking cannot be cancelled");
-  }
+    if (!booking) throw new AppError(404, "BOOKING_NOT_FOUND", "Booking not found");
+    if (booking.status === "cancelled" || booking.status === "completed") {
+      throw new AppError(409, "BOOKING_NOT_CANCELLABLE", "Booking cannot be cancelled");
+    }
 
-  const cutoff = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  if (booking.startsAt <= cutoff) {
-    throw new AppError(409, "CANCEL_CUTOFF", "Cannot cancel within 24 hours of class");
-  }
+    const cutoff = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    if (booking.startsAt <= cutoff) {
+      throw new AppError(409, "CANCEL_CUTOFF", "Cannot cancel within 24 hours of class");
+    }
 
-  await fastify.drizzle.transaction(async (tx) => {
-    await tx
+    const cancelled = await tx
       .update(bookings)
       .set({ status: "cancelled", cancelledAt: new Date(), cancelReason: "Student cancelled" })
-      .where(eq(bookings.id, bookingId));
+      .where(and(eq(bookings.id, bookingId), inArray(bookings.status, ["pending", "confirmed", "no_show"])))
+      .returning({ id: bookings.id });
+    if (cancelled.length === 0) {
+      throw new AppError(409, "BOOKING_NOT_CANCELLABLE", "Booking cannot be cancelled");
+    }
 
     if (booking.availabilityId) {
       await tx
@@ -709,6 +718,8 @@ export async function cancelStudentBooking(
       .update(classCredits)
       .set({ usedCredits: sql`GREATEST(${classCredits.usedCredits} - 1, 0)` })
       .where(eq(classCredits.id, booking.creditId));
+
+    return booking;
   });
 
   if (booking.gcalEventId) {

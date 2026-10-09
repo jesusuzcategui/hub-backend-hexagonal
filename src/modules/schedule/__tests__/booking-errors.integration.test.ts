@@ -278,6 +278,28 @@ describe.skipIf(!DB_URL)("booking flows error codes (throwaway DB)", () => {
       const id = await insertBooking(s, credit, new Date(Date.now() + 2 * H));
       expectError(await call("DELETE", `/schedule/my/${id}`, s), 409, "CANCEL_CUTOFF");
     });
+
+    // Concurrent cancels of ONE booking must refund ONE credit. Without an atomic
+    // status-guarded update every racer passes the stale status check and each one
+    // decrements used_credits again, minting free classes.
+    it("concurrent cancels refund the credit exactly once", async () => {
+      const s = await newStudent();
+      const credit = await addBlock(s, 5, 3);
+      const id = await insertBooking(s, credit, new Date(Date.now() + 5 * DAY));
+
+      // Warm the pool: on a cold pool the first request finishes on the only open
+      // connection before the others even connect, which hides the race.
+      await Promise.all(Array.from({ length: 10 }, () => pool.query("select pg_sleep(0.05)")));
+      const results = await Promise.all(Array.from({ length: 10 }, () => call("DELETE", `/schedule/my/${id}`, s)));
+
+      const ok = results.filter((r) => r.status < 300);
+      const conflicts = results.filter((r) => r.status === 409 && r.body.error?.code === "BOOKING_NOT_CANCELLABLE");
+      expect(ok).toHaveLength(1);
+      expect(conflicts).toHaveLength(9);
+
+      const [c] = await db.select({ used: classCredits.usedCredits }).from(classCredits).where(eq(classCredits.id, credit));
+      expect(c.used).toBe(2);
+    });
   });
 
   describe("PATCH /schedule/my/:id/reschedule", () => {
@@ -343,6 +365,24 @@ describe.skipIf(!DB_URL)("booking flows error codes (throwaway DB)", () => {
   });
 
   describe("admin booking actions", () => {
+    // Same race as the student cancel: an admin cancel overlapping a student cancel (or a
+    // second admin click) must refund the credit once.
+    it("cancel: concurrent admin + student cancels refund the credit exactly once", async () => {
+      const s = await newStudent();
+      const credit = await addBlock(s, 5, 3);
+      const id = await insertBooking(s, credit, new Date(Date.now() + 5 * DAY));
+      await Promise.all(Array.from({ length: 10 }, () => pool.query("select pg_sleep(0.05)")));
+
+      const results = await Promise.all([
+        ...Array.from({ length: 5 }, () => call("PATCH", `/admin/bookings/${id}/cancel`, teacherId, { reason: "it" }, "admin")),
+        ...Array.from({ length: 5 }, () => call("DELETE", `/schedule/my/${id}`, s)),
+      ]);
+
+      expect(results.filter((r) => r.status < 300)).toHaveLength(1);
+      const [c] = await db.select({ used: classCredits.usedCredits }).from(classCredits).where(eq(classCredits.id, credit));
+      expect(c.used).toBe(2);
+    });
+
     it("reschedule: unknown booking 404 BOOKING_NOT_FOUND", async () => {
       const admin = teacherId;
       expectError(await call("PATCH", "/admin/bookings/00000000-0000-4000-8000-0000000000dd/reschedule", admin, { newSlotId: sid(6) }, "admin"), 404, "BOOKING_NOT_FOUND");
