@@ -87,7 +87,11 @@ async function main() {
   await pool.end();
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only when run directly (`node dist/db/seed-mentoring.js`). migrate.ts imports this module and calls
+// seedMentoring() itself AFTER the migrations; running main() on import seeded against an unmigrated database.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
